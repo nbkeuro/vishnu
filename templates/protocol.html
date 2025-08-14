@@ -1,14 +1,49 @@
 {% extends "base.html" %}
+
+{% block title %}Select Protocol{% endblock %}
+
 {% block content %}
-<h3>Select Transaction Protocol</h3>
+<h3 style="text-align: center;">Select Transaction Protocol</h3>
+
 <form method="POST" action="{{ url_for('protocol') }}" class="form-wrap">
     <label for="protocol">Choose a protocol:</label><br>
     <select name="protocol" required>
-        {% for p in protocols %}
-            <option value="{{ p }}">{{ p }}</option>
+        {% for name, length in protocols.items() %}
+            <option value="{{ name }}">{{ name }} ({{ length }} digits)</option>
         {% endfor %}
     </select><br><br>
+
     <button type="submit">Continue</button>
 </form>
-{% endblock %}
 
+<style>
+.form-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+select {
+    padding: 8px;
+    width: 260px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 14px;
+}
+
+button {
+    background-color: #1a237e;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #3949ab;
+}
+</style>
+{% endblock %}
