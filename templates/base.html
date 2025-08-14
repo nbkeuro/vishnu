@@ -1,95 +1,41 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no"
-    />
-    <title>{% block title %}BLACK ROCK POS Terminal{% endblock %}</title>
-
-    <!-- Bootstrap 5 (no custom theme needed to run) -->
-    <link
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-      rel="stylesheet"
-      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
-      crossorigin="anonymous"
-    />
-
-    <!-- Optional app stylesheet -->
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title if title else "BLACK ROCK POS Terminal" }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    {% block head_extra %}{% endblock %}
-    <style>
-      /* Sensible dark UI defaults (works even if style.css is missing) */
-      body { background: #111; color: #e7e7e7; }
-      .navbar { background: #0f172a; }
-      a, .nav-link { color: #86efac; }
-      a:hover, .nav-link:hover { color: #4ade80; }
-      .card { background:#0b1220; border: 1px solid #1f2937; }
-      .form-control, .form-select { background:#0b1020; color:#e7e7e7; border-color:#243144; }
-      .form-control:focus, .form-select:focus { border-color:#22c55e; box-shadow:none; }
-      .table { color:#e7e7e7; }
-      .table thead th { border-bottom-color:#1f2937; }
-      footer { color:#94a3b8; }
-    </style>
-  </head>
-  <body>
-    <nav class="navbar navbar-expand-lg navbar-dark mb-4">
-      <div class="container">
-        <a class="navbar-brand fw-bold" href="{{ url_for('dashboard') }}">
-          BLACK ROCK POS
-        </a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#topnav">
-          <span class="navbar-toggler-icon"></span>
-        </button>
-        <div id="topnav" class="collapse navbar-collapse">
-          <ul class="navbar-nav me-auto">
-            {% if session.get('user') %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('protocol') }}">New Txn</a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('monitor') }}">History</a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('merchants') }}">Merchants</a>
-            </li>
-            {% endif %}
-          </ul>
-          <ul class="navbar-nav">
-            {% if session.get('user') %}
-              <li class="nav-item"><a class="nav-link" href="{{ url_for('change_password') }}">Change Password</a></li>
-              <li class="nav-item"><a class="nav-link" href="{{ url_for('logout') }}">Logout</a></li>
-            {% else %}
-              <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}">Login</a></li>
-            {% endif %}
-          </ul>
-        </div>
-      </div>
-    </nav>
-
-    <main class="container mb-5">
-      {% with msgs = get_flashed_messages() %}
-        {% if msgs %}
-          <div class="alert alert-info">
-            {% for m in msgs %}<div>{{ m }}</div>{% endfor %}
-          </div>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+<body>
+    <header>
+        <h1>BLACK ROCK POS Terminal</h1>
+        {% if session.get("user") %}
+        <nav>
+            <a href="{{ url_for('dashboard') }}">🏠 Dashboard</a>
+            <a href="{{ url_for('monitor') }}">📜 History</a>
+            <a href="{{ url_for('merchants') }}">🏦 Merchants</a>
+            <a href="{{ url_for('logout') }}">🚪 Logout</a>
+        </nav>
         {% endif %}
-      {% endwith %}
+    </header>
 
-      {% block content %}{% endblock %}
+    <main>
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="flash">
+              {% for msg in messages %}
+                <p>{{ msg }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
     </main>
 
-    <footer class="container text-center small pb-4">
-      © {{ now().year }} BLACK ROCK Payments
+    <footer>
+        © {{ now().year }} BLACK ROCK Payments
     </footer>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
-      integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
-      crossorigin="anonymous"></script>
-    {% block body_extra %}{% endblock %}
-  </body>
+</body>
 </html>
+
