@@ -1,33 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Dashboard · BLACK ROCK POS{% endblock %}
 {% block content %}
-<div class="row g-4">
-  <div class="col-12 col-lg-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h2 class="h5">Start a Transaction</h2>
-        <p class="text-secondary">Choose a protocol, enter card + auth, then amount.</p>
-        <a class="btn btn-success" href="{{ url_for('protocol') }}">New Transaction</a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-lg-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h2 class="h5">History</h2>
-        <p class="text-secondary">See approvals (MTI 0210), payout statuses, notes.</p>
-        <a class="btn btn-outline-light" href="{{ url_for('monitor') }}">View History</a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-lg-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h2 class="h5">Merchants</h2>
-        <p class="text-secondary">Configure payout method, chain and addresses.</p>
-        <a class="btn btn-outline-light" href="{{ url_for('merchants') }}">Manage Merchants</a>
-      </div>
-    </div>
-  </div>
-</div>
+<h2>Welcome, {{ session.get('user') }}!</h2>
+<ul>
+    <li><a href="{{ url_for('protocol') }}">Enter POS</a></li>
+    <li><a href="{{ url_for('change_password') }}">Change Password</a></li>
+</ul>
 {% endblock %}
