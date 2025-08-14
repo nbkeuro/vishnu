@@ -1,62 +1,71 @@
 {% extends "base.html" %}
-
-{% block title %}Manual Card Entry{% endblock %}
-
+{% block title %}Card Entry · BLACK ROCK POS{% endblock %}
 {% block content %}
-<h2>Manual Card Entry</h2>
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h5 mb-4">Card Details</h1>
+        <form method="post" novalidate>
+          <div class="mb-3">
+            <label class="form-label">PAN (Primary Account Number)</label>
+            <input class="form-control" name="pan" id="pan" inputmode="numeric" autocomplete="cc-number"
+                   placeholder="4111 1111 1111 1111" required>
+            <div class="form-text">Digits only; 12–19 digits accepted.</div>
+          </div>
+          <div class="row">
+            <div class="col-6">
+              <div class="mb-3">
+                <label class="form-label">Expiry (MM/YY)</label>
+                <input class="form-control" name="expiry" id="expiry" placeholder="MM/YY" required>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="mb-3">
+                <label class="form-label">CVV/CVC</label>
+                <input class="form-control" name="cvv" id="cvv" inputmode="numeric" maxlength="4" required>
+              </div>
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <a class="btn btn-outline-light" href="{{ url_for('protocol') }}">Back</a>
+            <button class="btn btn-success">Continue</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
 
-<form method="POST" action="{{ url_for('card') }}" class="form-wrap">
-
-    <!-- Card Number -->
-    <label>Card Number:</label><br>
-    <input type="text" 
-           name="pan" 
-           id="cardNumber"
-           placeholder="5423 5748 7648 9468" 
-           maxlength="19" 
-           required><br>
-
-    <!-- Expiry Date -->
-    <label>Expiry Date (MM/YY):</label><br>
-    <input type="text" 
-           name="expiry" 
-           id="expiryDate"
-           placeholder="09/26" 
-           maxlength="5" 
-           required><br>
-
-    <!-- CVV/CVC -->
-    <label>CVV/CVC (3 digits):</label><br>
-    <input type="text" 
-           name="cvv" 
-           id="cvv"
-           placeholder="123" 
-           maxlength="3" 
-           required><br>
-
-    <button type="submit">Proceed to Auth</button>
-</form>
-
+{% block body_extra %}
 <script>
-// Format card number with spaces every 4 digits
-document.getElementById('cardNumber').addEventListener('input', function (e) {
-    let value = e.target.value.replace(/\D/g, ''); // Remove non-numeric
-    value = value.replace(/(.{4})/g, '$1 ').trim(); // Add space every 4 digits
-    e.target.value = value;
-});
+  // Light input helpers (no dependency)
+  const onlyDigits = s => (s || '').replace(/\D+/g, '');
 
-// Auto-format expiry date as MM/YY
-document.getElementById('expiryDate').addEventListener('input', function (e) {
-    let value = e.target.value.replace(/\D/g, ''); // Remove non-numeric
-    if (value.length >= 3) {
-        value = value.slice(0, 2) + '/' + value.slice(2, 4);
-    }
-    e.target.value = value;
-});
+  const pan = document.getElementById('pan');
+  if (pan) {
+    pan.addEventListener('input', e => {
+      const digits = onlyDigits(e.target.value).slice(0, 19);
+      // group by 4 for readability (server strips anyway)
+      e.target.value = digits.replace(/(.{4})/g, '$1 ').trim();
+    });
+  }
 
-// Restrict CVV to digits only
-document.getElementById('cvv').addEventListener('input', function (e) {
-    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
-});
+  const expiry = document.getElementById('expiry');
+  if (expiry) {
+    expiry.addEventListener('input', e => {
+      let v = e.target.value.replace(/[^0-9]/g, '').slice(0,4);
+      if (v.length >= 3) v = v.slice(0,2) + '/' + v.slice(2);
+      e.target.value = v;
+    });
+  }
+
+  const cvv = document.getElementById('cvv');
+  if (cvv) {
+    cvv.addEventListener('input', e => {
+      e.target.value = onlyDigits(e.target.value).slice(0,4);
+    });
+  }
 </script>
 {% endblock %}
