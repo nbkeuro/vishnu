@@ -1,106 +1,22 @@
 
-from flask import Flask, render_template, render_template_string, request, redirect, session, url_for, send_file, flash, jsonify
-import random, logging, qrcode, io, os, json, hashlib, re
+import os
 from datetime import datetime
-from functools import wraps
-
-# -------- New: DB setup (Render-friendly) --------
+from uuid import uuid4
+from decimal import Decimal, ROUND_HALF_UP
+from flask import Flask, request, session, redirect, url_for, render_template_string, flash
 from flask_sqlalchemy import SQLAlchemy
 
-app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY', 'change-me-in-env')  # Render: set SECRET_KEY env var
-logging.basicConfig(level=logging.INFO)
+# ------------------ Config ------------------
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///app.db")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-# -------- New: Config & DB --------
-PASSWORD_FILE = os.getenv('PASSWORD_FILE', 'password.json')
-DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///app.db')  # Render: set to Postgres URL
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+MAX_GAS_USD = Decimal(os.getenv("MAX_GAS_USD", "5"))
+MAX_GAS_PCT = Decimal(os.getenv("MAX_GAS_PCT", "1.5"))
+DEFAULT_CHAIN = os.getenv("DEFAULT_CHAIN", "TRC20")
+DEFAULT_PAYOUT_METHOD = os.getenv("DEFAULT_PAYOUT_METHOD", "CRYPTO")  # CRYPTO or BANK
 
-# New: simple gas & payout config (tweak via env)
-MAX_GAS_USD = float(os.getenv('MAX_GAS_USD', '5.0'))           # hard cap on gas in USD
-MAX_GAS_PCT = float(os.getenv('MAX_GAS_PCT', '1.5'))           # gas cannot exceed this % of fiat amount
-DEFAULT_CHAIN = os.getenv('DEFAULT_CHAIN', 'ERC20')            # fallback chain if merchant not configured
-
-# -------- Existing auth config (kept) --------
-USERNAME = "admin"
-PASSWORD = "Br_3339"  # username is still checked, password hash stored in file
-
-# Ensure password file exists
-if not os.path.exists(PASSWORD_FILE):
-    with open(PASSWORD_FILE, "w") as f:
-        hashed = hashlib.sha256("admin123".encode()).hexdigest()
-        json.dump({"password": hashed}, f)
-
-def check_password(raw):
-    with open(PASSWORD_FILE) as f:
-        stored = json.load(f)['password']
-    return hashlib.sha256(raw.encode()).hexdigest() == stored
-
-def set_password(newpass):
-    with open(PASSWORD_FILE, "w") as f:
-        hashed = hashlib.sha256(newpass.encode()).hexdigest()
-        json.dump({"password": hashed}, f)
-
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get("logged_in"):
-            flash("You must be logged in.")
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return decorated
-
-# -------- New: Database models --------
-class Transaction(db.Model):
-    __tablename__ = 'transactions'
-    id = db.Column(db.Integer, primary_key=True)
-    mti = db.Column(db.String(4))
-    rrn = db.Column(db.String(12))        # F37
-    stan = db.Column(db.String(6))         # F11
-    arn = db.Column(db.String(20))         # optional
-    mid = db.Column(db.String(32))         # F42
-    tid = db.Column(db.String(16))         # F41
-    amount = db.Column(db.String(16))      # store raw cents string (F4) to avoid float issues
-    currency = db.Column(db.String(3))     # F49
-    field39 = db.Column(db.String(2))      # approval code (00 = approved)
-    payout_chain = db.Column(db.String(16))# ERC20/TRC20
-    wallet_address = db.Column(db.String(128))
-    tx_hash = db.Column(db.String(128))    # blockchain tx id (if payout sent)
-    status = db.Column(db.String(32))      # 'approved', 'declined', 'payout_sent', 'payout_failed'
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-class MerchantWallet(db.Model):
-    __tablename__ = 'merchant_wallets'
-    id = db.Column(db.Integer, primary_key=True)
-    mid = db.Column(db.String(32), index=True)   # merchant ID (ISO F42)
-    chain = db.Column(db.String(16))             # 'ERC20' or 'TRC20'
-    address = db.Column(db.String(128))
-    active = db.Column(db.Boolean, default=True)
-
-with app.app_context():
-    db.create_all()
-
-# -------- Dummy card database (left as-is) --------
-DUMMY_CARDS = {
-    "4114755393849011": {"expiry": "0926", "cvv": "363", "auth": "1942", "type": "POS-101.1"},
-    "4000123412341234": {"expiry": "1126", "cvv": "123", "auth": "4021", "type": "POS-101.1"},
-    "4117459374038454": {"expiry": "1026", "cvv": "258", "auth": "384726", "type": "POS-101.4"},
-    "4123456789012345": {"expiry": "0826", "cvv": "852", "auth": "495128", "type": "POS-101.4"},
-    "5454957994741066": {"expiry": "1126", "cvv": "746", "auth": "627192", "type": "POS-101.6"},
-    "6011000990131077": {"expiry": "0825", "cvv": "330", "auth": "8765", "type": "POS-101.7"},
-    "3782822463101088": {"expiry": "1226", "cvv": "1059", "auth": "0000", "type": "POS-101.8"},
-    "3530760473041099": {"expiry": "0326", "cvv": "244", "auth": "712398", "type": "POS-201.1"},
-    "4114938274651920": {"expiry": "0926", "cvv": "463", "auth": "3127", "type": "POS-101.1"},
-    "4001948263728191": {"expiry": "1026", "cvv": "291", "auth": "574802", "type": "POS-101.4"},
-    "6011329481720394": {"expiry": "0825", "cvv": "310", "auth": "8891", "type": "POS-101.7"},
-    "378282246310106":  {"expiry": "1226", "cvv": "1439", "auth": "0000", "type": "POS-101.8"},
-    "3531540982734612": {"expiry": "0326", "cvv": "284", "auth": "914728", "type": "POS-201.1"},
-    "5456038291736482": {"expiry": "1126", "cvv": "762", "auth": "695321", "type": "POS-201.3"},
-    "4118729301748291": {"expiry": "1026", "cvv": "249", "auth": "417263", "type": "POS-201.5"}
-}
-
+# Protocols & required auth-code length (F38)
 PROTOCOLS = {
     "POS Terminal -101.1 (4-digit approval)": 4,
     "POS Terminal -101.4 (6-digit approval)": 6,
@@ -112,363 +28,302 @@ PROTOCOLS = {
     "POS Terminal -201.5 (6-digit approval)": 6
 }
 
-FIELD_39_RESPONSES = {
-    "05": "Do Not Honor",
-    "14": "Terminal unable to resolve encrypted session state. Contact card issuer",
-    "54": "Expired Card",
-    "82": "Invalid CVV",
-    "91": "Issuer Inoperative",
-    "92": "Invalid Terminal Protocol"
-}
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+db = SQLAlchemy(app)
 
-# -------- Helpers: backend wallet lookup & payout with gas rules --------
-def get_wallet_for_merchant(mid: str, chain: str):
-    w = MerchantWallet.query.filter_by(mid=mid, chain=chain, active=True).first()
-    return w.address if w else None
+# ------------------ Models ------------------
+class Merchant(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    mid = db.Column(db.String(64), unique=True, index=True)
+    payout_method = db.Column(db.String(16), default=DEFAULT_PAYOUT_METHOD)  # CRYPTO or BANK
+    chain = db.Column(db.String(16), default=DEFAULT_CHAIN)  # crypto
+    address = db.Column(db.String(128))
+    bank_name = db.Column(db.String(64))  # bank
+    account_name = db.Column(db.String(64))
+    account_no = db.Column(db.String(64))
+    ifsc_swift = db.Column(db.String(32))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-def estimate_gas_usd(chain: str) -> float:
-    """Placeholder: in production query your provider for real-time gas.
-    We return a conservative static estimate to enforce strict caps."""
-    return 0.50 if chain.upper() == 'TRC20' else 1.50  # rough static guardrail
+class Transaction(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    mti = db.Column(db.String(4), default="0210")
+    protocol = db.Column(db.String(64))
+    rrn = db.Column(db.String(24))
+    stan = db.Column(db.String(12))
+    tid = db.Column(db.String(16))
+    mid = db.Column(db.String(32))
+    amount_cents = db.Column(db.Integer, default=0)
+    currency = db.Column(db.String(3), default="USD")
+    resp_code = db.Column(db.String(2), default="00")
+    auth_code = db.Column(db.String(12))  # F38
+    status = db.Column(db.String(32), default="approved")
+    payout_method = db.Column(db.String(16), default=DEFAULT_PAYOUT_METHOD)
+    payout_chain = db.Column(db.String(16), default=DEFAULT_CHAIN)
+    payout_address = db.Column(db.String(128))
+    payout_bank_ref = db.Column(db.String(64))
+    tx_hash = db.Column(db.String(128))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-def trigger_crypto_payout(mid: str, amount_minor: str, currency: str, chain: str) -> dict:
-    """Apply strict gas rules and *simulate* a payout. Replace with your real sender."""
-    wallet = get_wallet_for_merchant(mid, chain) or ''
-    if not wallet:
-        return {"ok": False, "err": f"No active {chain} wallet configured for MID {mid}"}
-
-    # amount_minor is ISO F4 (cents). Convert to whole currency for ratio checks.
-    try:
-        amt = int(amount_minor) / 100.0
-    except Exception:
-        amt = 0.0
-
-    est_gas = estimate_gas_usd(chain)
-    # Cap 1: absolute gas dollars
-    if est_gas > MAX_GAS_USD:
-        return {"ok": False, "err": f"Gas {est_gas} exceeds hard cap {MAX_GAS_USD}"}
-    # Cap 2: percentage of fiat amount (skip if amount is tiny)
-    if amt > 0 and (est_gas / max(amt, 0.01)) * 100.0 > MAX_GAS_PCT:
-        return {"ok": False, "err": f"Gas {est_gas} exceeds {MAX_GAS_PCT}% of amount {amt}"}
-
-    # Simulate success — plug your provider API here (Fireblocks/BitGo/etc.)
-    tx_hash = f"SIMULATED_{chain}_TX_{random.randint(100000, 999999)}"
-    return {"ok": True, "tx_hash": tx_hash, "wallet": wallet}
-
-# -------- Routes (existing + new) --------
-@app.route('/')
-def home():
-    return redirect(url_for('login'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        user = request.form.get('username')
-        passwd = request.form.get('password')
-        if user == USERNAME and check_password(passwd):
-            session['logged_in'] = True
-            return redirect(url_for('protocol'))
-        flash("Invalid username or password.")
-    return render_template('login.html')
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    flash("You have been logged out.")
-    return redirect(url_for('login'))
-
-@app.route('/change-password', methods=['GET', 'POST'])
-@login_required
-def change_password():
-    if request.method == 'POST':
-        current = request.form['current']
-        new = request.form['new']
-        if not check_password(current):
-            return render_template('change_password.html', error="Current password incorrect.")
-        set_password(new)
-        return render_template('change_password.html', success="Password changed.")
-    return render_template('change_password.html')
-
-@app.route('/protocol', methods=['GET', 'POST'])
-@login_required
-def protocol():
-    if request.method == 'POST':
-        selected = request.form.get('protocol')
-        if selected not in PROTOCOLS:
-            return redirect(url_for('rejected', code="92", reason=FIELD_39_RESPONSES["92"]))
-        session['protocol'] = selected
-        session['code_length'] = PROTOCOLS[selected]
-        return redirect(url_for('amount'))
-    return render_template('protocol.html', protocols=PROTOCOLS.keys())
-
-@app.route('/amount', methods=['GET', 'POST'])
-@login_required
-def amount():
-    if request.method == 'POST':
-        session['amount'] = request.form.get('amount')
-        return redirect(url_for('payout'))
-    return render_template('amount.html')
-
-@app.route('/payout', methods=['GET', 'POST'])
-@login_required
-def payout():
-    if request.method == 'POST':
-        method = request.form['method']
-        session['payout_type'] = method
-
-        # NOTE: For backend-controlled wallets, we no longer accept arbitrary wallet input here.
-        # We bind a demo MID for UI flow and pull wallet from backend if configured.
-        session['mid'] = os.getenv('DEMO_MID', 'DEMO_MID_001')
-        wallet_from_backend = get_wallet_for_merchant(session['mid'], method)
-
-        if not wallet_from_backend:
-            flash(f"No {method} wallet configured for merchant {session['mid']} (backend)."
-                  " Ask admin to set it in DB.")
-            return redirect(url_for('payout'))
-
-        session['wallet'] = wallet_from_backend
-        return redirect(url_for('card'))
-
-    return render_template('payout.html')
-
-@app.route('/card', methods=['GET', 'POST'])
-@login_required
-def card():
-    # TEMPORARY CARD ACCEPTANCE LOGIC (unchanged)
-    if request.method == 'POST':
-        pan = request.form['pan'].replace(" ", "")
-        exp = request.form['expiry'].replace("/", "")
-        cvv = request.form['cvv']
-        session.update({'pan': pan, 'exp': exp, 'cvv': cvv})
-
-        # Card type inference for receipt
-        if pan.startswith("4"):
-            session['card_type'] = "VISA"
-        elif pan.startswith("5"):
-            session['card_type'] = "MASTERCARD"
-        elif pan.startswith("3"):
-            session['card_type'] = "AMEX"
-        elif pan.startswith("6"):
-            session['card_type'] = "DISCOVER"
-        else:
-            session['card_type'] = "UNKNOWN"
-
-        return redirect(url_for('auth'))
-
-    return render_template('card.html')
-
-@app.route('/auth', methods=['GET', 'POST'])
-@login_required
-def auth():
-    expected_length = session.get('code_length', 6)
-
-    # TEMPORARY UNIVERSAL SUCCESS LOGIC (unchanged)
-    if request.method == 'POST':
-        code = request.form.get('auth')
-        if len(code) != expected_length:
-            return render_template('auth.html', warning=f"Code must be {expected_length} digits.")
-
-        txn_id = f"TXN{random.randint(100000, 999999)}"
-        arn = f"ARN{random.randint(100000000000, 999999999999)}"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        field39 = "00"
-
-        session.update({
-            "txn_id": txn_id,
-            "arn": arn,
-            "timestamp": timestamp,
-            "field39": field39
-        })
-
-        # Save transaction in DB for monitoring
-        t = Transaction(
-            mti='0210', rrn=None, stan=None, arn=arn,
-            mid=session.get('mid', 'DEMO_MID_001'), tid='DEMO_TID_001',
-            amount=str(int(session.get('amount', '0')) * 100),  # store cents
-            currency='USD', field39='00',
-            payout_chain=session.get('payout_type', DEFAULT_CHAIN),
-            wallet_address=session.get('wallet'), status='approved'
-        )
-        db.session.add(t); db.session.commit()
-
-        return redirect(url_for('success'))
-
-    return render_template('auth.html')
-
-@app.route('/success')
-@login_required
-def success():
-    return render_template('success.html',
-        txn_id=session.get("txn_id"),
-        arn=session.get("arn"),
-        pan=session.get("pan", "")[-4:],
-        amount=session.get("amount"),
-        timestamp=session.get("timestamp")
-    )
-
-@app.route("/receipt")
-def receipt():
-    raw_protocol = session.get("protocol", "")
-    match = re.search(r"-(\d+\.\d+)\s+\((\d+)-digit", raw_protocol)
-    if match:
-        protocol_version = match.group(1)
-        auth_digits = int(match.group(2))
-    else:
-        protocol_version = "Unknown"
-        auth_digits = 4
-
-    raw_amount = session.get("amount", "0")
-    if raw_amount and raw_amount.isdigit():
-        amount_fmt = f"{int(raw_amount):,}.00"
-    else:
-        amount_fmt = "0.00"
-
-    return render_template("receipt.html",
-        txn_id=session.get("txn_id"),
-        arn=session.get("arn"),
-        pan=session.get("pan")[-4:],
-        amount=amount_fmt,
-        payout=session.get("payout_type"),
-        wallet=session.get("wallet"),
-        auth_code="*" * auth_digits,
-        iso_field_18="5999",
-        iso_field_25="00",
-        field39="00",
-        card_type=session.get("card_type", "VISA"),
-        protocol_version=protocol_version,
-        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    )
-
-@app.route('/rejected')
-def rejected():
-    return render_template('rejected.html',
-        code=request.args.get("code"),
-        reason=request.args.get("reason", "Transaction Declined")
-    )
-
-@app.route("/licence")
-def licence():
-    return render_template("licence.html")
-
-@app.route('/offline')
-@login_required
-def offline():
-    return render_template('offline.html')
-
-# -------- New: ISO 8583 webhook from separate server --------
-@app.route('/iso-webhook', methods=['POST'])
-def iso_webhook():
-    """The separate ISO-8583 TCP server POSTs approved/declined auth responses here.
-    Expected JSON keys: mti, 39, 4, 37, 11, 41, 42, 49, arn (optional)"""
-    data = request.get_json(force=True, silent=True) or {}
-    mti = str(data.get('mti', '')).zfill(4)
-    f39 = str(data.get('39') or data.get('f39') or '')
-    f4  = str(data.get('4')  or data.get('f4')  or '0')
-    f37 = str(data.get('37') or data.get('f37') or '')
-    f11 = str(data.get('11') or data.get('f11') or '')
-    f41 = str(data.get('41') or data.get('f41') or '')
-    f42 = str(data.get('42') or data.get('f42') or '')
-    f49 = str(data.get('49') or data.get('f49') or 'XXX')
-    arn = str(data.get('arn') or '')
-
-    status = 'approved' if f39 == '00' else 'declined'
-
-    # Decide chain by merchant config
-    chain = DEFAULT_CHAIN
-    w = MerchantWallet.query.filter_by(mid=f42, active=True).first()
-    if w:
-        chain = w.chain
-
-    wallet = get_wallet_for_merchant(f42, chain)
-
-    # Persist transaction
-    t = Transaction(mti=mti, rrn=f37, stan=f11, arn=arn, mid=f42, tid=f41,
-                    amount=f4, currency=f49, field39=f39, payout_chain=chain,
-                    wallet_address=wallet, status=status)
-    db.session.add(t); db.session.commit()
-
-    # Trigger payout if approved, with strict gas caps
-    txh = None
-    if status == 'approved':
-        res = trigger_crypto_payout(f42, f4, f49, chain)
-        if res.get('ok'):
-            txh = res.get('tx_hash')
-            t.tx_hash = txh
-            t.status = 'payout_sent'
-            if res.get('wallet'):
-                t.wallet_address = res.get('wallet')
-        else:
-            t.status = 'payout_failed'
-            app.logger.error(f"Payout failed for MID {f42}: {res.get('err')}" )
-        db.session.commit()
-
-    return jsonify({
-        "ok": True,
-        "txn_id": t.id,
-        "status": t.status,
-        "tx_hash": txh,
-        "wallet": t.wallet_address
-    }), 200
-
-# -------- New: Monitor UI (no external templates) --------
-MONITOR_TEMPLATE = """
-<!doctype html>
-<html>
-  <head>
-    <meta charset='utf-8'>
-    <title>Monitor</title>
-    <style>
-      body{font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding:20px;}
-      table{border-collapse: collapse; width:100%;}
-      th,td{border:1px solid #ddd; padding:8px; font-size:14px;}
-      th{background:#f5f5f5; text-align:left;}
-      .ok{color: #0a7a2d; font-weight:600;}
-      .err{color: #a10; font-weight:600;}
-      .muted{color:#666;}
-      .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;}
-    </style>
-  </head>
-  <body>
-    <h2>Transaction Monitor</h2>
-    <p class='muted'>Most recent {{ rows|length }} records.</p>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th><th>When (UTC)</th><th>MTI</th><th>MID/TID</th>
-          <th>RRN/STAN</th><th>Amt (F4)</th><th>Cur</th><th>39</th>
-          <th>Chain</th><th>Wallet</th><th>Status</th><th>TX Hash</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in rows %}
-        <tr>
-          <td class='mono'>{{ r.id }}</td>
-          <td>{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-          <td class='mono'>{{ r.mti }}</td>
-          <td class='mono'>{{ r.mid }}/{{ r.tid }}</td>
-          <td class='mono'>{{ r.rrn }}/{{ r.stan }}</td>
-          <td class='mono'>{{ r.amount }}</td>
-          <td>{{ r.currency }}</td>
-          <td class='mono'>{{ r.field39 }}</td>
-          <td>{{ r.payout_chain }}</td>
-          <td class='mono'>{{ (r.wallet_address or '')[:10] + '…' if r.wallet_address else '' }}</td>
-          <td class='{{ 'ok' if r.status in ['approved','payout_sent'] else 'err' }}'>{{ r.status }}</td>
-          <td class='mono'>{{ (r.tx_hash or '')[:14] + '…' if r.tx_hash else '' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </body>
-</html>
+# ------------------ Helpers ------------------
+NAV = """
+<nav>
+  <a href='{{ url_for("home") }}'>Home</a> |
+  <a href='{{ url_for("monitor") }}'>History</a> |
+  <a href='{{ url_for("merchants") }}'>Merchants</a> |
+  {% if "user" in session %}<a href='{{ url_for("logout") }}'>Logout</a>{% endif %}
+</nav>
 """
 
-@app.route('/monitor')
-@login_required
+BASE = """
+<!doctype html><html><head><meta charset='utf-8'><title>{{ title }}</title></head><body>
+""" + NAV + """
+<div>
+{% with msgs = get_flashed_messages() %}
+  {% if msgs %}<ul style='color:green'>{% for m in msgs %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
+{% endwith %}
+{% block content %}{% endblock %}
+</div></body></html>
+"""
+
+def require_login():
+    return bool(session.get("user"))
+
+def dollars_to_cents(amount_str):
+    try:
+        amt = Decimal(amount_str).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return int(amt * 100)
+    except:
+        return 0
+
+def cents_to_display(cents):
+    return f"{Decimal(cents)/100:.2f}"
+
+def compute_gas_caps(amount_cents):
+    amount_usd = Decimal(amount_cents) / 100
+    pct_cap = (amount_usd * (MAX_GAS_PCT / 100)).quantize(Decimal("0.01"))
+    return min(pct_cap, MAX_GAS_USD)
+
+def simulate_network_fee_usd(chain, amount_cents):
+    base = Decimal("0.20") if chain.upper() == "TRC20" else Decimal("2.50")
+    bump = (Decimal(amount_cents) / 10000) * Decimal("0.03")
+    return (base + bump).quantize(Decimal("0.01"))
+
+def simulate_send_crypto(chain, to_addr, amount_cents):
+    fee_usd = simulate_network_fee_usd(chain, amount_cents)
+    txh = "0x" + uuid4().hex
+    return txh, fee_usd
+
+def simulate_bank_transfer(mid, amount_cents, currency):
+    bank_ref = "BNK-" + uuid4().hex[:10].upper()
+    fee_usd = Decimal("0.50")
+    return bank_ref, fee_usd
+
+def validate_auth_code(protocol, auth_code):
+    need = PROTOCOLS.get(protocol)
+    return bool(auth_code) and need is not None and len(auth_code.strip()) == int(need)
+
+# ------------------ Routes ------------------
+@app.route("/", methods=["GET"])
+def root():
+    return redirect(url_for("home") if session.get("user") else url_for("login"))
+
+@app.route("/login", methods=["GET","POST"])
+def login():
+    if request.method == "POST":
+        if request.form.get("password") == ADMIN_PASSWORD:
+            session["user"] = "admin"
+            return redirect(url_for("home"))
+        flash("Invalid password")
+    return render_template_string(BASE + """
+    {% block content %}
+    <h3>Login</h3>
+    <form method='post'><input type='password' name='password'><button>Login</button></form>
+    {% endblock %}""", title="Login")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+@app.route("/home")
+def home():
+    if not require_login():
+        return redirect(url_for("login"))
+    m = Merchant.query.filter_by(mid="DEMO_MID_001").first()
+    return render_template_string(BASE + """
+    {% block content %}
+    <h3>Card Terminal</h3>
+    <form method='post' action='{{ url_for("punch") }}'>
+      Amount: <input name='amount' required><br>
+      MID: <input name='mid' value='DEMO_MID_001' required><br>
+      TID: <input name='tid' value='TERM001' required><br>
+      Currency: <select name='currency'><option>USD</option><option>EUR</option></select><br>
+      Protocol: <select name='protocol'>
+        {% for name, need in protocols.items() %}
+          <option value='{{ name }}'>{{ name }} ({{ need }} digits)</option>
+        {% endfor %}
+      </select><br>
+      Issuer Auth Code (F38): <input name='auth_code'><br>
+      <button>Process</button>
+    </form>
+    {% endblock %}""", title="Home", protocols=PROTOCOLS, m=m)
+
+@app.route("/punch", methods=["POST"])
+def punch():
+    if not require_login():
+        return redirect(url_for("login"))
+    amount_cents = dollars_to_cents(request.form.get("amount","0"))
+    mid = request.form.get("mid")
+    tid = request.form.get("tid")
+    currency = request.form.get("currency","USD")
+    protocol = request.form.get("protocol")
+    auth_code = (request.form.get("auth_code") or "").strip()
+
+    rrn = uuid4().hex[:12].upper()
+    stan = uuid4().hex[:6].upper()
+
+    if not auth_code:
+        need = PROTOCOLS.get(protocol, 6)
+        auth_code = uuid4().hex[:need].upper()
+
+    if not validate_auth_code(protocol, auth_code):
+        flash(f"Auth code must be {PROTOCOLS.get(protocol)} digits")
+        return redirect(url_for("home"))
+
+    resp_code = "00" if amount_cents > 0 else "12"
+    m = Merchant.query.filter_by(mid=mid).first()
+    if not m:
+        m = Merchant(mid=mid, payout_method=DEFAULT_PAYOUT_METHOD, chain=DEFAULT_CHAIN, address="WalletXYZ")
+        db.session.add(m); db.session.commit()
+
+    tx = Transaction(
+        mti="0210", protocol=protocol, rrn=rrn, stan=stan, tid=tid, mid=mid,
+        amount_cents=amount_cents, currency=currency, resp_code=resp_code,
+        auth_code=auth_code, status=("approved" if resp_code=="00" else "declined"),
+        payout_method=m.payout_method, payout_chain=m.chain, payout_address=m.address
+    )
+    db.session.add(tx); db.session.commit()
+
+    if resp_code != "00":
+        flash("Declined by issuer")
+        return redirect(url_for("monitor"))
+
+    max_gas_allowed = compute_gas_caps(amount_cents)
+    est_fee = simulate_network_fee_usd(tx.payout_chain, amount_cents) if m.payout_method=="CRYPTO" else Decimal("0.00")
+
+    return render_template_string(BASE + """
+    {% block content %}
+    <h3>Approved (MTI 0210)</h3>
+    <p>Protocol: {{ tx.protocol }}</p>
+    <p>Auth Code: {{ tx.auth_code }}</p>
+    <p>Amount: {{ cents_to_display(tx.amount_cents) }} {{ tx.currency }}</p>
+    {% if tx.payout_method=="CRYPTO" %}
+      <p>Wallet: {{ tx.payout_chain }} {{ tx.payout_address }}</p>
+      <p>Max gas: ${{ max_gas_allowed }} | Est fee: ${{ est_fee }}</p>
+    {% else %}
+      <p>Bank payout will be used</p>
+    {% endif %}
+    <form method='post' action='{{ url_for("send_payout", tx_id=tx.id) }}'>
+      <button {% if tx.payout_method=="CRYPTO" and est_fee > max_gas_allowed %}disabled{% endif %}>Trigger Payout</button>
+    </form>
+    {% endblock %}""", title="Approved", tx=tx, cents_to_display=cents_to_display,
+        max_gas_allowed=max_gas_allowed, est_fee=est_fee)
+
+@app.route("/payout/<int:tx_id>", methods=["POST"])
+def send_payout(tx_id):
+    if not require_login():
+        return redirect(url_for("login"))
+    tx = Transaction.query.get_or_404(tx_id)
+
+    if tx.payout_method == "CRYPTO":
+        allowed = compute_gas_caps(tx.amount_cents)
+        est_fee = simulate_network_fee_usd(tx.payout_chain, tx.amount_cents)
+        if est_fee > allowed:
+            tx.status = "payout_failed"
+            tx.notes = "Gas too high"
+            db.session.commit()
+            flash("Gas too high")
+            return redirect(url_for("monitor"))
+        txh, fee = simulate_send_crypto(tx.payout_chain, tx.payout_address, tx.amount_cents)
+        tx.tx_hash = txh
+        tx.notes = f"Crypto fee ${fee}"
+        tx.status = "payout_sent"
+    else:
+        bank_ref, fee = simulate_bank_transfer(tx.mid, tx.amount_cents, tx.currency)
+        tx.payout_bank_ref = bank_ref
+        tx.notes = f"Bank fee ${fee}"
+        tx.status = "payout_sent"
+
+    db.session.commit()
+    flash("Payout sent")
+    return redirect(url_for("monitor"))
+
+@app.route("/merchants", methods=["GET","POST"])
+def merchants():
+    if not require_login():
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        mid = request.form.get("mid") or "DEMO_MID_001"
+        payout_method = request.form.get("payout_method") or DEFAULT_PAYOUT_METHOD
+        m = Merchant.query.filter_by(mid=mid).first()
+        if not m: m = Merchant(mid=mid)
+        m.payout_method = payout_method
+        if payout_method == "CRYPTO":
+            m.chain = request.form.get("chain") or DEFAULT_CHAIN
+            m.address = request.form.get("address")
+        else:
+            m.bank_name = request.form.get("bank_name")
+            m.account_name = request.form.get("account_name")
+            m.account_no = request.form.get("account_no")
+            m.ifsc_swift = request.form.get("ifsc_swift")
+        db.session.add(m); db.session.commit()
+        flash("Merchant updated")
+        return redirect(url_for("merchants"))
+    items = Merchant.query.all()
+    return render_template_string(BASE + """
+    {% block content %}
+    <h3>Merchants</h3>
+    <form method='post'>
+      MID: <input name='mid'><br>
+      Method: <select name='payout_method'><option>CRYPTO</option><option>BANK</option></select><br>
+      Chain: <input name='chain'><br>
+      Address: <input name='address'><br>
+      Bank: <input name='bank_name'><br>
+      Acc Name: <input name='account_name'><br>
+      Acc No: <input name='account_no'><br>
+      IFSC/SWIFT: <input name='ifsc_swift'><br>
+      <button>Save</button>
+    </form>
+    {% endblock %}""", title="Merchants", items=items)
+
+@app.route("/monitor")
 def monitor():
-    rows = Transaction.query.order_by(Transaction.created_at.desc()).limit(100).all()
-    return render_template_string(MONITOR_TEMPLATE, rows=rows)
+    if not require_login():
+        return redirect(url_for("login"))
+    txs = Transaction.query.order_by(Transaction.created_at.desc()).all()
+    return render_template_string(BASE + """
+    {% block content %}
+    <h3>Transaction History</h3>
+    <table border=1>
+      <tr><th>When</th><th>Protocol</th><th>Amount</th><th>Status</th><th>Auth</th></tr>
+      {% for t in txs %}
+      <tr>
+        <td>{{ t.created_at }}</td><td>{{ t.protocol }}</td><td>{{ cents_to_display(t.amount_cents) }}</td><td>{{ t.status }}</td><td>{{ t.auth_code }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endblock %}""", title="History", cents_to_display=cents_to_display, txs=txs)
 
-if __name__ == '__main__':
-    # On Render, the platform provides PORT env var for HTTP. Flask uses it automatically via 'gunicorn'
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', '10000')), debug=False)
+@app.before_first_request
+def init_db():
+    db.create_all()
+    if not Merchant.query.filter_by(mid="DEMO_MID_001").first():
+        db.session.add(Merchant(mid="DEMO_MID_001", payout_method=DEFAULT_PAYOUT_METHOD, chain=DEFAULT_CHAIN, address="WalletXYZ"))
+        db.session.commit()
 
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
