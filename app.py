@@ -318,7 +318,7 @@ def monitor():
     </table>
     {% endblock %}""", title="History", cents_to_display=cents_to_display, txs=txs)
 
-@app.before_first_request
+@app.before_request
 def init_db():
     db.create_all()
     if not Merchant.query.filter_by(mid="DEMO_MID_001").first():
