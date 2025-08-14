@@ -14,7 +14,7 @@
     <header>
         <h1>BLACK ROCK POS Terminal</h1>
         <nav>
-            <a href="{{ url_for('home') }}">🏠 Home</a>
+            <a href="{{ url_for('dashboard') }}">🏠 Dashboard</a>
             <a href="{{ url_for('monitor') }}">📜 History</a>
             <a href="{{ url_for('merchants') }}">🏦 Merchants</a>
             {% if 'user' in session %}
