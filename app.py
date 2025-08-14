@@ -9,22 +9,27 @@ from flask import (
 )
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
-
-# 2FA
 import pyotp
 
 # ------------------ Config ------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///app.db")
-# Seed admin (used only on first run to create the account)
+
+# Seed admin (used only once to create the initial account)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD_SEED = os.getenv("ADMIN_PASSWORD", "admin123")
-ADMIN_TOTP_SEED = os.getenv("TOTP_SECRET")  # if absent, one will be generated
+ADMIN_TOTP_SEED = os.getenv("TOTP_SECRET")  # optional; will be generated if absent
 
+# Payout / Gas logic
 MAX_GAS_USD = Decimal(os.getenv("MAX_GAS_USD", "5"))
 MAX_GAS_PCT = Decimal(os.getenv("MAX_GAS_PCT", "1.5"))
 DEFAULT_CHAIN = os.getenv("DEFAULT_CHAIN", "TRC20")
 DEFAULT_PAYOUT_METHOD = os.getenv("DEFAULT_PAYOUT_METHOD", "BANK")  # CRYPTO or BANK
+
+# (Optional future) External crypto integration envs (left unused until you wire them)
+TRON_API_KEY = os.getenv("TRON_API_KEY")            # example placeholder
+TRON_WALLET = os.getenv("TRON_WALLET")              # example placeholder
+TRON_WALLET_PRIVATE = os.getenv("TRON_WALLET_PRIV") # example placeholder
 
 # Protocols & required auth-code length (F38)
 PROTOCOLS = {
@@ -100,28 +105,10 @@ def cents_to_display(cents):
     return f"{Decimal(cents)/100:.2f}"
 
 def compute_gas_caps(amount_cents):
+    """Gas cap is min(MAX_GAS_USD, amount * MAX_GAS_PCT%)."""
     amount_usd = Decimal(amount_cents) / 100
     pct_cap = (amount_usd * (MAX_GAS_PCT / 100)).quantize(Decimal("0.01"))
     return min(pct_cap, MAX_GAS_USD)
-
-def simulate_network_fee_usd(chain, amount_cents):
-    base = Decimal("0.20") if chain.upper() == "TRC20" else Decimal("2.50")
-    bump = (Decimal(amount_cents) / 10000) * Decimal("0.03")
-    return (base + bump).quantize(Decimal("0.01"))
-
-def simulate_send_crypto(chain, to_addr, amount_cents):
-    fee_usd = simulate_network_fee_usd(chain, amount_cents)
-    txh = "0x" + uuid4().hex
-    return txh, fee_usd
-
-def simulate_bank_transfer(mid, amount_cents, currency):
-    bank_ref = "BNK-" + uuid4().hex[:10].upper()
-    fee_usd = Decimal("0.50")
-    return bank_ref, fee_usd
-
-def validate_auth_code(protocol, auth_code):
-    need = PROTOCOLS.get(protocol)
-    return bool(auth_code) and need is not None and len(auth_code.strip()) == int(need)
 
 def mask_pan(pan):
     digits = "".join(ch for ch in pan if ch.isdigit())
@@ -132,14 +119,25 @@ def mask_pan(pan):
 def get_admin():
     return AdminUser.query.filter_by(username=ADMIN_USERNAME).first()
 
-# ------------------ Auth / Session ------------------
+# ------------------ Routing: Root & Navigation ------------------
 @app.route("/", methods=["GET"])
 def root():
     return redirect(url_for("dashboard") if session.get("user") else url_for("login"))
 
+# Fix BuildError from base.html using url_for('home')
+@app.route("/home", methods=["GET"])
+def home():
+    """Alias to dashboard so templates that call url_for('home') work."""
+    return redirect(url_for("dashboard") if session.get("user") else url_for("login"))
+
+# Simple health check
+@app.route("/health")
+def health():
+    return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+# ------------------ Auth / Session ------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    # Renders templates/login.html you provided (expects username & password fields)
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = (request.form.get("password") or "")
@@ -149,6 +147,7 @@ def login():
             flash("Logged in.")
             return redirect(url_for("dashboard"))
         flash("Invalid credentials.")
+    # uses your external templates/login.html
     return render_template("login.html")
 
 @app.route("/logout")
@@ -160,7 +159,7 @@ def logout():
 # -------- Forgot Password (via TOTP) ----------
 @app.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
-    # Single-page flow: username + TOTP + new password
+    # Single-page flow: username + TOTP code + new password
     error = success = None
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
@@ -175,23 +174,23 @@ def forgot_password():
             error = "New password and confirmation must match."
         else:
             totp = pyotp.TOTP(admin.totp_secret)
+            # allow a small time window skew
             if not totp.verify(otp, valid_window=1):
                 error = "Invalid or expired TOTP."
             else:
                 admin.password_hash = generate_password_hash(new)
                 db.session.commit()
-                success = "Password reset successful. You can now log in."
-                flash(success)
+                flash("Password reset successful. You can now log in.")
                 return redirect(url_for("login"))
 
-    # Inline minimal template so you don't need another file
+    # Minimal inline page so you don't need another template
     return render_template_string(
         """
         {% extends "base.html" %}
         {% block content %}
         <h2>Reset Password (TOTP)</h2>
-        {% if error %}<p style="color:red">{{ error }}</p>{% endif %}
-        {% if success %}<p style="color:green">{{ success }}</p>{% endif %}
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        {% if success %}<p class="success">{{ success }}</p>{% endif %}
         <form method="POST" class="form-wrap">
           <label>User ID:</label><br>
           <input type="text" name="username" required><br>
@@ -203,13 +202,13 @@ def forgot_password():
           <input type="password" name="confirm" required><br>
           <button type="submit">Reset Password</button>
         </form>
-        <p style="margin-top:10px">Use your Authy / Google Authenticator app for the code.</p>
+        <p style="margin-top:10px">Open Authy/Google Authenticator and use the 6-digit code.</p>
         {% endblock %}
         """,
         error=error, success=success
     )
 
-# Optional: show current user's TOTP setup (secret + provisioning URI)
+# Optional: view TOTP setup details for the current admin
 @app.route("/totp-setup")
 def totp_setup():
     if not require_login():
@@ -221,9 +220,8 @@ def totp_setup():
 
     issuer = "RUTLAND_POS"
     account_name = admin.username
-    uri = pyotp.totp.TOTP(admin.totp_secret).provisioning_uri(name=account_name, issuer_name=issuer)
+    uri = pyotp.TOTP(admin.totp_secret).provisioning_uri(name=account_name, issuer_name=issuer)
 
-    # Inline simple page (you can create a template later if you like)
     return render_template_string(
         """
         {% extends "base.html" %}
@@ -234,7 +232,6 @@ def totp_setup():
         <p><strong>Account:</strong> {{ account }}</p>
         <p><strong>URI (copy into Authy/Google Authenticator):</strong></p>
         <code style="display:block;word-break:break-all">{{ uri }}</code>
-        <p class="note">Security tip: after enrolling your device, keep the secret safe.</p>
         {% endblock %}
         """,
         secret=admin.totp_secret, issuer=issuer, account=account_name, uri=uri
@@ -245,6 +242,7 @@ def totp_setup():
 def dashboard():
     if not require_login():
         return redirect(url_for("login"))
+    # uses your external templates/dashboard.html
     return render_template("dashboard.html")
 
 @app.route("/protocol", methods=["GET", "POST"])
@@ -260,7 +258,9 @@ def protocol():
         session["selected_protocol"] = selected_protocol
         return redirect(url_for("card"))
 
-    return render_template("protocol.html", protocols=list(PROTOCOLS.keys()))
+    # IMPORTANT: pass the dict so templates using "protocols.items()" won't break
+    # If your template loops differently, it still works because dict is iterable too.
+    return render_template("protocol.html", protocols=PROTOCOLS)
 
 @app.route("/card", methods=["GET", "POST"])
 def card():
@@ -299,6 +299,7 @@ def card():
         session["card_cvv"] = cvv
         return redirect(url_for("auth"))
 
+    # uses your external templates/card.html
     return render_template("card.html")
 
 @app.route("/auth", methods=["GET", "POST"])
@@ -320,6 +321,7 @@ def auth():
         session["auth_code"] = code
         return redirect(url_for("amount"))
 
+    # uses your external templates/Auth.html (capital A)
     return render_template("Auth.html", warning=warning)
 
 @app.route("/amount", methods=["GET", "POST"])
@@ -380,34 +382,41 @@ def amount():
         db.session.add(tx)
         db.session.commit()
 
-        # Optional: auto-payout
+        # --- Payout handling (NO simulation) ---
         if tx.payout_method == "CRYPTO":
+            # Respect gas caps
             allowed = compute_gas_caps(tx.amount_cents)
-            est_fee = simulate_network_fee_usd(tx.payout_chain, tx.amount_cents)
-            if est_fee <= allowed:
-                txh, fee = simulate_send_crypto(tx.payout_chain, tx.payout_address, tx.amount_cents)
-                tx.tx_hash = txh
-                tx.notes = (tx.notes or "") + f" | Crypto fee ${fee}"
-                tx.status = "payout_sent"
-                db.session.commit()
-            else:
-                tx.status = "payout_failed"
-                tx.notes = (tx.notes or "") + " | Gas too high"
-                db.session.commit()
-                flash("Approved, but payout skipped (gas too high).")
-        else:
-            bank_ref, fee = simulate_bank_transfer(tx.mid, tx.amount_cents, tx.currency)
-            tx.payout_bank_ref = bank_ref
-            tx.notes = (tx.notes or "") + f" | Bank fee ${fee}"
-            tx.status = "payout_sent"
-            db.session.commit()
 
-        flash("Approved (MTI 0210).")
+            # You will implement the real network estimate & send later.
+            # For now, we do NOT simulate. We just mark as pending with a clear note.
+            # Example contract/wallet config checks:
+            if not (TRON_API_KEY and TRON_WALLET and TRON_WALLET_PRIVATE):
+                tx.status = "payout_pending"
+                extra = f" | Crypto payout pending; configure TRON_API_KEY/TRON_WALLET/TRON_WALLET_PRIV. Gas cap ${allowed}"
+                tx.notes = (tx.notes or "") + extra
+                db.session.commit()
+                flash("Approved. Crypto payout is pending configuration.")
+            else:
+                # Here’s where you'll later:
+                # 1) Estimate network fee (if > allowed -> mark failed/hold)
+                # 2) Broadcast transaction, get tx hash, update status
+                tx.status = "payout_pending"
+                tx.notes = (tx.notes or "") + f" | Crypto payout queued (gas cap ${allowed})."
+                db.session.commit()
+                flash("Approved. Crypto payout queued.")
+        else:
+            # BANK payout: just record a pending status
+            tx.status = "payout_pending_bank"
+            tx.notes = (tx.notes or "") + " | Bank payout pending."
+            db.session.commit()
+            flash("Approved. Bank payout pending.")
+
         return redirect(url_for("monitor"))
 
+    # uses your external templates/amount.html
     return render_template("amount.html")
 
-# ------------------ Merchants ------------------
+# ------------------ Merchants (kept simple, inline view) ------------------
 @app.route("/merchants", methods=["GET", "POST"])
 def merchants():
     if not require_login():
@@ -434,7 +443,6 @@ def merchants():
         return redirect(url_for("merchants"))
 
     items = Merchant.query.all()
-    # Temporary inline list; you can move to a merchants.html later
     rows = "".join(
         f"<tr><td>{m.mid}</td><td>{m.payout_method}</td><td>{m.chain or ''}</td><td>{m.address or ''}</td></tr>"
         for m in items
@@ -443,9 +451,9 @@ def merchants():
     <h3>Merchants</h3>
     <form method='post' class='form-wrap'>
       MID: <input name='mid'><br>
-      Method: <select name='payout_method'><option>CRYPTO</option><option>BANK</option></select><br>
-      Chain: <input name='chain'><br>
-      Address: <input name='address'><br>
+      Method: <select name='payout_method'><option {'selected' if DEFAULT_PAYOUT_METHOD=='CRYPTO' else ''}>CRYPTO</option><option {'selected' if DEFAULT_PAYOUT_METHOD=='BANK' else ''}>BANK</option></select><br>
+      Chain: <input name='chain' placeholder='e.g., TRC20'><br>
+      Address: <input name='address' placeholder='Wallet address'><br>
       Bank: <input name='bank_name'><br>
       Acc Name: <input name='account_name'><br>
       Acc No: <input name='account_no'><br>
@@ -468,8 +476,16 @@ def monitor():
     txs = Transaction.query.order_by(Transaction.created_at.desc()).all()
 
     def row(t):
-        return f"<tr><td>{t.created_at}</td><td>{t.protocol}</td><td>{cents_to_display(t.amount_cents)} {t.currency}</td>" \
-               f"<td>{t.status}</td><td>{t.auth_code}</td><td>{t.notes or ''}</td></tr>"
+        return (
+            "<tr>"
+            f"<td>{t.created_at}</td>"
+            f"<td>{t.protocol}</td>"
+            f"<td>{cents_to_display(t.amount_cents)} {t.currency}</td>"
+            f"<td>{t.status}</td>"
+            f"<td>{t.auth_code}</td>"
+            f"<td>{t.notes or ''}</td>"
+            "</tr>"
+        )
 
     rows = "".join(row(t) for t in txs)
     html = f"""
@@ -507,6 +523,7 @@ def change_password():
             db.session.commit()
             success = "Password updated."
 
+    # uses your external templates/password.html
     return render_template("password.html", error=error, success=success)
 
 # ------------------ Init DB at Startup ------------------
@@ -538,8 +555,9 @@ with app.app_context():
         print(f"Username: {ADMIN_USERNAME}")
         print(f"Seed password: {ADMIN_PASSWORD_SEED}")
         print(f"TOTP secret (save to Authy/Google Authenticator): {seed_secret}")
-        print("You can also visit /totp-setup after login to view the provisioning URI.")
+        print("After login, you can also visit /totp-setup to view the provisioning URI.")
 
 # ------------------ Run ------------------
 if __name__ == "__main__":
+    # Render typically sets PORT. Default to 5000 for local dev.
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
