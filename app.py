@@ -2,7 +2,11 @@ import os
 from datetime import datetime
 from uuid import uuid4
 from decimal import Decimal, ROUND_HALF_UP
-from flask import Flask, request, session, redirect, url_for, render_template_string, flash
+
+from flask import (
+    Flask, request, session, redirect, url_for,
+    render_template, flash
+)
 from flask_sqlalchemy import SQLAlchemy
 
 # ------------------ Config ------------------
@@ -24,9 +28,10 @@ PROTOCOLS = {
     "POS Terminal -101.8 (PIN-LESS transaction)": 4,
     "POS Terminal -201.1 (6-digit approval)": 6,
     "POS Terminal -201.3 (6-digit approval)": 6,
-    "POS Terminal -201.5 (6-digit approval)": 6
+    "POS Terminal -201.5 (6-digit approval)": 6,
 }
 
+# ------------------ App / DB ------------------
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
@@ -57,7 +62,7 @@ class Transaction(db.Model):
     amount_cents = db.Column(db.Integer, default=0)
     currency = db.Column(db.String(3), default="USD")
     resp_code = db.Column(db.String(2), default="00")
-    auth_code = db.Column(db.String(12))
+    auth_code = db.Column(db.String(12))  # F38
     status = db.Column(db.String(32), default="approved")
     payout_method = db.Column(db.String(16), default=DEFAULT_PAYOUT_METHOD)
     payout_chain = db.Column(db.String(16), default=DEFAULT_CHAIN)
@@ -68,30 +73,6 @@ class Transaction(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ------------------ Helpers ------------------
-NAV = """
-<nav>
-  <a href='{{ url_for("home") }}'>Home</a> |
-  <a href='{{ url_for("monitor") }}'>History</a> |
-  <a href='{{ url_for("merchants") }}'>Merchants</a> |
-  {% if "user" in session %}<a href='{{ url_for("logout") }}'>Logout</a>{% endif %}
-</nav>
-"""
-
-BASE = """
-<!doctype html><html><head><meta charset='utf-8'><title>{{ title }}</title></head><body>
-""" + NAV + """
-<div>
-{% with msgs = get_flashed_messages() %}
-  {% if msgs %}<ul style='color:green'>{% for m in msgs %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
-{% endwith %}
-{{ body|safe }}
-</div></body></html>
-"""
-
-def render_page(title, body_html, **context):
-    """Ensures extra context (like protocols) is passed to template."""
-    return render_template_string(BASE, title=title, body=body_html, **context)
-
 def require_login():
     return bool(session.get("user"))
 
@@ -99,7 +80,7 @@ def dollars_to_cents(amount_str):
     try:
         amt = Decimal(amount_str).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return int(amt * 100)
-    except:
+    except Exception:
         return 0
 
 def cents_to_display(cents):
@@ -129,148 +110,216 @@ def validate_auth_code(protocol, auth_code):
     need = PROTOCOLS.get(protocol)
     return bool(auth_code) and need is not None and len(auth_code.strip()) == int(need)
 
-# ------------------ Routes ------------------
+def mask_pan(pan):
+    digits = "".join(ch for ch in pan if ch.isdigit())
+    if len(digits) < 8:
+        return "*" * (len(digits) - 4) + digits[-4:]
+    return digits[:6] + "*" * (len(digits) - 10) + digits[-4:]
+
+# ------------------ Auth / Session ------------------
 @app.route("/", methods=["GET"])
 def root():
-    return redirect(url_for("home") if session.get("user") else url_for("login"))
+    return redirect(url_for("dashboard") if session.get("user") else url_for("login"))
 
-@app.route("/login", methods=["GET","POST"])
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         if request.form.get("password") == ADMIN_PASSWORD:
             session["user"] = "admin"
-            return redirect(url_for("home"))
+            return redirect(url_for("dashboard"))
         flash("Invalid password")
-    return render_page("Login", """
-    <h3>Login</h3>
-    <form method='post'><input type='password' name='password'><button>Login</button></form>
-    """)
+    return render_template("base.html", **{"title": "Login", "messages": []})  # base shell
+    # You likely have a dedicated login template; if so, render it instead.
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
 
-@app.route("/home")
-def home():
+# ------------------ UI Pages ------------------
+@app.route("/dashboard")
+def dashboard():
     if not require_login():
         return redirect(url_for("login"))
-    m = Merchant.query.filter_by(mid="DEMO_MID_001").first()
-    return render_page("Home", """
-    <h3>Card Terminal</h3>
-    <form method='post' action='{{ url_for("punch") }}'>
-      Amount: <input name='amount' required><br>
-      MID: <input name='mid' value='DEMO_MID_001' required><br>
-      TID: <input name='tid' value='TERM001' required><br>
-      Currency: <select name='currency'><option>USD</option><option>EUR</option></select><br>
-      Protocol: <select name='protocol'>
-        {% for name, need in protocols.items() %}
-          <option value='{{ name }}'>{{ name }} ({{ need }} digits)</option>
-        {% endfor %}
-      </select><br>
-      Issuer Auth Code (F38): <input name='auth_code'><br>
-      <button>Process</button>
-    </form>
-    """, protocols=PROTOCOLS, m=m)
+    return render_template("dashboard.html")
 
-@app.route("/punch", methods=["POST"])
-def punch():
+@app.route("/protocol", methods=["GET", "POST"])
+def protocol():
     if not require_login():
         return redirect(url_for("login"))
-    amount_cents = dollars_to_cents(request.form.get("amount","0"))
-    mid = request.form.get("mid")
-    tid = request.form.get("tid")
-    currency = request.form.get("currency","USD")
-    protocol = request.form.get("protocol")
-    auth_code = (request.form.get("auth_code") or "").strip()
 
-    rrn = uuid4().hex[:12].upper()
-    stan = uuid4().hex[:6].upper()
+    if request.method == "POST":
+        selected_protocol = request.form.get("protocol")
+        if selected_protocol not in PROTOCOLS:
+            flash("Please select a valid protocol.")
+            return redirect(url_for("protocol"))
+        session["selected_protocol"] = selected_protocol
+        return redirect(url_for("card"))
 
-    if not auth_code:
-        need = PROTOCOLS.get(protocol, 6)
-        auth_code = uuid4().hex[:need].upper()
+    # template expects: protocols iterable
+    return render_template("protocol.html", protocols=list(PROTOCOLS.keys()))
 
-    if not validate_auth_code(protocol, auth_code):
-        flash(f"Auth code must be {PROTOCOLS.get(protocol)} digits")
-        return redirect(url_for("home"))
+@app.route("/card", methods=["GET", "POST"])
+def card():
+    if not require_login():
+        return redirect(url_for("login"))
+    if "selected_protocol" not in session:
+        flash("Select a protocol first.")
+        return redirect(url_for("protocol"))
 
-    resp_code = "00" if amount_cents > 0 else "12"
-    m = Merchant.query.filter_by(mid=mid).first()
-    if not m:
-        m = Merchant(mid=mid, payout_method=DEFAULT_PAYOUT_METHOD, chain=DEFAULT_CHAIN, address="WalletXYZ")
-        db.session.add(m); db.session.commit()
+    if request.method == "POST":
+        pan = (request.form.get("pan") or "").strip()
+        expiry = (request.form.get("expiry") or "").strip()
+        cvv = (request.form.get("cvv") or "").strip()
 
-    tx = Transaction(
-        mti="0210", protocol=protocol, rrn=rrn, stan=stan, tid=tid, mid=mid,
-        amount_cents=amount_cents, currency=currency, resp_code=resp_code,
-        auth_code=auth_code, status=("approved" if resp_code=="00" else "declined"),
-        payout_method=m.payout_method, payout_chain=m.chain, payout_address=m.address
-    )
-    db.session.add(tx); db.session.commit()
+        # Basic format checks per your requirements:
+        # - PAN: allow spaces every 4 digits; store digits only; must be 12-19 digits typical; you asked for spacing every 4
+        digits_only = "".join(ch for ch in pan if ch.isdigit())
+        if not (12 <= len(digits_only) <= 19):
+            flash("Card number must be 12–19 digits.")
+            return redirect(url_for("card"))
 
-    if resp_code != "00":
-        flash("Declined by issuer")
+        # - Expiry: must be MM/YY (with '/')
+        if len(expiry) != 5 or expiry[2] != "/":
+            flash("Expiry must be in MM/YY format.")
+            return redirect(url_for("card"))
+        mm = expiry[:2]
+        yy = expiry[3:]
+        if not (mm.isdigit() and yy.isdigit() and 1 <= int(mm) <= 12):
+            flash("Invalid expiry date.")
+            return redirect(url_for("card"))
+
+        # - CVV/CVC: you asked for 4 digits
+        if not (cvv.isdigit() and len(cvv) == 4):
+            flash("CVV/CVC must be 4 digits.")
+            return redirect(url_for("card"))
+
+        session["card_pan"] = digits_only
+        session["card_masked"] = mask_pan(digits_only)
+        session["card_expiry"] = expiry
+        session["card_cvv"] = cvv
+        return redirect(url_for("auth"))
+
+    return render_template("card.html")
+
+@app.route("/auth", methods=["GET", "POST"])
+def auth():
+    if not require_login():
+        return redirect(url_for("login"))
+    if "selected_protocol" not in session:
+        flash("Select a protocol first.")
+        return redirect(url_for("protocol"))
+
+    warning = None
+    need = PROTOCOLS.get(session["selected_protocol"], 6)
+
+    if request.method == "POST":
+        code = (request.form.get("auth") or "").strip()
+        if not (code.isdigit() and len(code) == need):
+            warning = f"Auth code must be {need} digits."
+            return render_template("Auth.html", warning=warning)
+        session["auth_code"] = code
+        return redirect(url_for("amount"))
+
+    return render_template("Auth.html", warning=warning)
+
+@app.route("/amount", methods=["GET", "POST"])
+def amount():
+    if not require_login():
+        return redirect(url_for("login"))
+    if "selected_protocol" not in session or "auth_code" not in session:
+        flash("Please complete protocol and auth first.")
+        return redirect(url_for("protocol"))
+
+    if request.method == "POST":
+        amount_str = request.form.get("amount", "0")
+        amount_cents = dollars_to_cents(amount_str)
+        if amount_cents <= 0:
+            flash("Enter a valid amount.")
+            return redirect(url_for("amount"))
+
+        # Demo fields
+        mid = "DEMO_MID_001"
+        tid = "TERM001"
+        currency = "USD"
+
+        # Ensure merchant exists
+        m = Merchant.query.filter_by(mid=mid).first()
+        if not m:
+            m = Merchant(
+                mid=mid,
+                payout_method=DEFAULT_PAYOUT_METHOD,
+                chain=DEFAULT_CHAIN,
+                address="WalletXYZ"
+            )
+            db.session.add(m)
+            db.session.commit()
+
+        rrn = uuid4().hex[:12].upper()
+        stan = uuid4().hex[:6].upper()
+        protocol = session["selected_protocol"]
+        auth_code = session["auth_code"]
+
+        # Create TX
+        tx = Transaction(
+            mti="0210",
+            protocol=protocol,
+            rrn=rrn,
+            stan=stan,
+            tid=tid,
+            mid=mid,
+            amount_cents=amount_cents,
+            currency=currency,
+            resp_code="00",
+            auth_code=auth_code,
+            status="approved",
+            payout_method=m.payout_method,
+            payout_chain=m.chain,
+            payout_address=m.address,
+            notes=f"PAN {session.get('card_masked','')} EXP {session.get('card_expiry','')}"
+        )
+        db.session.add(tx)
+        db.session.commit()
+
+        # Optional: auto-payout for CRYPTO if fee <= cap; BANK simulated otherwise
+        if tx.payout_method == "CRYPTO":
+            allowed = compute_gas_caps(tx.amount_cents)
+            est_fee = simulate_network_fee_usd(tx.payout_chain, tx.amount_cents)
+            if est_fee <= allowed:
+                txh, fee = simulate_send_crypto(tx.payout_chain, tx.payout_address, tx.amount_cents)
+                tx.tx_hash = txh
+                tx.notes = (tx.notes or "") + f" | Crypto fee ${fee}"
+                tx.status = "payout_sent"
+                db.session.commit()
+            else:
+                tx.status = "payout_failed"
+                tx.notes = (tx.notes or "") + " | Gas too high"
+                db.session.commit()
+                flash("Approved, but payout skipped (gas too high).")
+        else:
+            bank_ref, fee = simulate_bank_transfer(tx.mid, tx.amount_cents, tx.currency)
+            tx.payout_bank_ref = bank_ref
+            tx.notes = (tx.notes or "") + f" | Bank fee ${fee}"
+            tx.status = "payout_sent"
+            db.session.commit()
+
+        flash("Approved (MTI 0210).")
         return redirect(url_for("monitor"))
 
-    max_gas_allowed = compute_gas_caps(amount_cents)
-    est_fee = simulate_network_fee_usd(tx.payout_chain, amount_cents) if m.payout_method=="CRYPTO" else Decimal("0.00")
+    return render_template("amount.html")
 
-    return render_page("Approved", """
-    <h3>Approved (MTI 0210)</h3>
-    <p>Protocol: {{ tx.protocol }}</p>
-    <p>Auth Code: {{ tx.auth_code }}</p>
-    <p>Amount: {{ cents_to_display(tx.amount_cents) }} {{ tx.currency }}</p>
-    {% if tx.payout_method=="CRYPTO" %}
-      <p>Wallet: {{ tx.payout_chain }} {{ tx.payout_address }}</p>
-      <p>Max gas: ${{ max_gas_allowed }} | Est fee: ${{ est_fee }}</p>
-    {% else %}
-      <p>Bank payout will be used</p>
-    {% endif %}
-    <form method='post' action='{{ url_for("send_payout", tx_id=tx.id) }}'>
-      <button {% if tx.payout_method=="CRYPTO" and est_fee > max_gas_allowed %}disabled{% endif %}>Trigger Payout</button>
-    </form>
-    """, tx=tx, cents_to_display=cents_to_display,
-        max_gas_allowed=max_gas_allowed, est_fee=est_fee)
-
-@app.route("/payout/<int:tx_id>", methods=["POST"])
-def send_payout(tx_id):
-    if not require_login():
-        return redirect(url_for("login"))
-    tx = Transaction.query.get_or_404(tx_id)
-
-    if tx.payout_method == "CRYPTO":
-        allowed = compute_gas_caps(tx.amount_cents)
-        est_fee = simulate_network_fee_usd(tx.payout_chain, tx.amount_cents)
-        if est_fee > allowed:
-            tx.status = "payout_failed"
-            tx.notes = "Gas too high"
-            db.session.commit()
-            flash("Gas too high")
-            return redirect(url_for("monitor"))
-        txh, fee = simulate_send_crypto(tx.payout_chain, tx.payout_address, tx.amount_cents)
-        tx.tx_hash = txh
-        tx.notes = f"Crypto fee ${fee}"
-        tx.status = "payout_sent"
-    else:
-        bank_ref, fee = simulate_bank_transfer(tx.mid, tx.amount_cents, tx.currency)
-        tx.payout_bank_ref = bank_ref
-        tx.notes = f"Bank fee ${fee}"
-        tx.status = "payout_sent"
-
-    db.session.commit()
-    flash("Payout sent")
-    return redirect(url_for("monitor"))
-
-@app.route("/merchants", methods=["GET","POST"])
+# ------------------ Merchants (simple form via string or add a template later) ------------------
+@app.route("/merchants", methods=["GET", "POST"])
 def merchants():
     if not require_login():
         return redirect(url_for("login"))
+
     if request.method == "POST":
         mid = request.form.get("mid") or "DEMO_MID_001"
         payout_method = request.form.get("payout_method") or DEFAULT_PAYOUT_METHOD
         m = Merchant.query.filter_by(mid=mid).first()
-        if not m: m = Merchant(mid=mid)
+        if not m:
+            m = Merchant(mid=mid)
         m.payout_method = payout_method
         if payout_method == "CRYPTO":
             m.chain = request.form.get("chain") or DEFAULT_CHAIN
@@ -280,11 +329,18 @@ def merchants():
             m.account_name = request.form.get("account_name")
             m.account_no = request.form.get("account_no")
             m.ifsc_swift = request.form.get("ifsc_swift")
-        db.session.add(m); db.session.commit()
-        flash("Merchant updated")
+        db.session.add(m)
+        db.session.commit()
+        flash("Merchant updated.")
         return redirect(url_for("merchants"))
+
     items = Merchant.query.all()
-    return render_page("Merchants", """
+    # Temporary inline view: keep simple until you add merchants.html
+    rows = "".join(
+        f"<tr><td>{m.mid}</td><td>{m.payout_method}</td><td>{m.chain or ''}</td><td>{m.address or ''}</td></tr>"
+        for m in items
+    )
+    html = f"""
     <h3>Merchants</h3>
     <form method='post'>
       MID: <input name='mid'><br>
@@ -297,31 +353,72 @@ def merchants():
       IFSC/SWIFT: <input name='ifsc_swift'><br>
       <button>Save</button>
     </form>
-    """, items=items)
+    <hr>
+    <table border=1 cellpadding=6>
+      <tr><th>MID</th><th>Method</th><th>Chain</th><th>Address</th></tr>
+      {rows}
+    </table>
+    """
+    return html
 
+# ------------------ Monitor ------------------
 @app.route("/monitor")
 def monitor():
     if not require_login():
         return redirect(url_for("login"))
     txs = Transaction.query.order_by(Transaction.created_at.desc()).all()
-    return render_page("History", """
+
+    # Simple table (you can create a monitor.html later and move this there)
+    def row(t):
+        return f"<tr><td>{t.created_at}</td><td>{t.protocol}</td><td>{cents_to_display(t.amount_cents)} {t.currency}</td>" \
+               f"<td>{t.status}</td><td>{t.auth_code}</td><td>{t.notes or ''}</td></tr>"
+
+    rows = "".join(row(t) for t in txs)
+    return f"""
+    <html><head><title>History</title></head><body>
+    <a href="{url_for('dashboard')}">Home</a> | <a href="{url_for('logout')}">Logout</a>
     <h3>Transaction History</h3>
-    <table border=1>
-      <tr><th>When</th><th>Protocol</th><th>Amount</th><th>Status</th><th>Auth</th></tr>
-      {% for t in txs %}
-      <tr>
-        <td>{{ t.created_at }}</td><td>{{ t.protocol }}</td><td>{{ cents_to_display(t.amount_cents) }}</td><td>{{ t.status }}</td><td>{{ t.auth_code }}</td>
-      </tr>
-      {% endfor %}
+    <table border=1 cellpadding=6>
+      <tr><th>When</th><th>Protocol</th><th>Amount</th><th>Status</th><th>Auth</th><th>Notes</th></tr>
+      {rows}
     </table>
-    """, cents_to_display=cents_to_display, txs=txs)
+    </body></html>
+    """
+
+# ------------------ Change Password (template: password.html) ------------------
+@app.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    if not require_login():
+        return redirect(url_for("login"))
+
+    error = success = None
+    if request.method == "POST":
+        curr = request.form.get("current") or ""
+        new = request.form.get("new") or ""
+        confirm = request.form.get("confirm") or ""
+
+        if curr != ADMIN_PASSWORD:
+            error = "Current password is incorrect."
+        elif not new or new != confirm:
+            error = "New password and confirmation must match."
+        else:
+            # In a real system, you'd persist this securely.
+            success = "Password updated (demo message)."
+
+    return render_template("password.html", error=error, success=success)
 
 # ------------------ Init DB at Startup ------------------
 with app.app_context():
     db.create_all()
     if not Merchant.query.filter_by(mid="DEMO_MID_001").first():
-        db.session.add(Merchant(mid="DEMO_MID_001", payout_method=DEFAULT_PAYOUT_METHOD, chain=DEFAULT_CHAIN, address="WalletXYZ"))
+        db.session.add(Merchant(
+            mid="DEMO_MID_001",
+            payout_method=DEFAULT_PAYOUT_METHOD,
+            chain=DEFAULT_CHAIN,
+            address="WalletXYZ"
+        ))
         db.session.commit()
 
+# ------------------ Run ------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
