@@ -1,17 +1,62 @@
 {% extends "base.html" %}
+
+{% block title %}Manual Card Entry{% endblock %}
+
 {% block content %}
+<h2>Manual Card Entry</h2>
+
 <form method="POST" action="{{ url_for('card') }}" class="form-wrap">
-    <h2>Manual Card Entry</h2>	
+
+    <!-- Card Number -->
     <label>Card Number:</label><br>
-    <input type="text" name="pan" placeholder="5423 5748 7648 9468" required><br>
+    <input type="text" 
+           name="pan" 
+           id="cardNumber"
+           placeholder="5423 5748 7648 9468" 
+           maxlength="19" 
+           required><br>
 
+    <!-- Expiry Date -->
     <label>Expiry Date (MM/YY):</label><br>
-    <input type="text" name="expiry" placeholder="09/26" required><br>
+    <input type="text" 
+           name="expiry" 
+           id="expiryDate"
+           placeholder="09/26" 
+           maxlength="5" 
+           required><br>
 
-    <label>CVV:</label><br>
-    <input type="text" name="cvv" placeholder="123" required><br>
+    <!-- CVV/CVC -->
+    <label>CVV/CVC (4 digits):</label><br>
+    <input type="text" 
+           name="cvv" 
+           id="cvv"
+           placeholder="1234" 
+           maxlength="4" 
+           required><br>
 
     <button type="submit">Proceed to Auth</button>
 </form>
-{% endblock %}
 
+<script>
+// Format card number with spaces every 4 digits
+document.getElementById('cardNumber').addEventListener('input', function (e) {
+    let value = e.target.value.replace(/\D/g, ''); // Remove non-numeric
+    value = value.replace(/(.{4})/g, '$1 ').trim(); // Add space every 4 digits
+    e.target.value = value;
+});
+
+// Auto-format expiry date as MM/YY
+document.getElementById('expiryDate').addEventListener('input', function (e) {
+    let value = e.target.value.replace(/\D/g, ''); // Remove non-numeric
+    if (value.length >= 3) {
+        value = value.slice(0, 2) + '/' + value.slice(2, 4);
+    }
+    e.target.value = value;
+});
+
+// Restrict CVV to digits only
+document.getElementById('cvv').addEventListener('input', function (e) {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+});
+</script>
+{% endblock %}
