@@ -289,8 +289,8 @@ def card():
             flash("Invalid expiry date.")
             return redirect(url_for("card"))
 
-        if not (cvv.isdigit() and len(cvv) == 4):
-            flash("CVV/CVC must be 4 digits.")
+        if not (cvv.isdigit() and len(cvv) == 3):
+            flash("CVV/CVC must be 3 digits.")
             return redirect(url_for("card"))
 
         session["card_pan"] = digits_only
