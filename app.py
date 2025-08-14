@@ -13,7 +13,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 MAX_GAS_USD = Decimal(os.getenv("MAX_GAS_USD", "5"))
 MAX_GAS_PCT = Decimal(os.getenv("MAX_GAS_PCT", "1.5"))
 DEFAULT_CHAIN = os.getenv("DEFAULT_CHAIN", "TRC20")
-DEFAULT_PAYOUT_METHOD = os.getenv("DEFAULT_PAYOUT_METHOD", "CRYPTO")  # CRYPTO or BANK
+DEFAULT_PAYOUT_METHOD = os.getenv("DEFAULT_PAYOUT_METHOD", "BANK")  # CRYPTO or BANK
 
 # Protocols & required auth-code length (F38)
 PROTOCOLS = {
