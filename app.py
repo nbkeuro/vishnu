@@ -89,6 +89,7 @@ BASE = """
 """
 
 def render_page(title, body_html, **context):
+    """Ensures extra context (like protocols) is passed to template."""
     return render_template_string(BASE, title=title, body=body_html, **context)
 
 def require_login():
