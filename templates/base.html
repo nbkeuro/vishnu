@@ -1,68 +1,55 @@
-{% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}BLACK ROCK POS{% endblock %}</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <meta name="theme-color" content="#1a237e">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <header>
+        <h1>BLACK ROCK POS Terminal</h1>
+        <nav>
+            <a href="{{ url_for('home') }}">🏠 Home</a>
+            <a href="{{ url_for('monitor') }}">📜 History</a>
+            <a href="{{ url_for('merchants') }}">🏦 Merchants</a>
+            {% if 'user' in session %}
+                <a href="{{ url_for('logout') }}">🚪 Logout</a>
+            {% else %}
+                <a href="{{ url_for('login') }}">🔑 Login</a>
+            {% endif %}
+        </nav>
+    </header>
 
-{% block title %}Authorization Code{% endblock %}
+    <main class="container">
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="flash">
+              {% for msg in messages %}
+                <p>{{ msg }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
 
-{% block content %}
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        {% block content %}{% endblock %}
+    </main>
 
-<div class="card">
-    <h2>Enter Authorization Code</h2>
+    <footer>
+        <p>&copy; {{ current_year|default(2025) }} BLACK ROCK Payments</p>
+    </footer>
 
-    <form id="authForm" method="POST" action="{{ url_for('auth') }}" class="form-wrap">
-        <div class="form-group" style="position: relative;">
-            <label for="authInput">Authorization Code:</label>
-            <input type="password" name="auth" id="authInput" required class="form-control" placeholder="••••••" style="padding-right: 40px;">
-            <span class="toggle-icon" onclick="toggleAuthVisibility()" style="position: absolute; right: 10px; top: 38px; cursor: pointer;">
-                <i id="eyeIcon" class="fas fa-eye" style="color: #0f0;"></i>
-            </span>
-        </div>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/service-worker.js')
+                .then(reg => console.log("✅ Service Worker Registered", reg))
+                .catch(err => console.error("❌ Service Worker failed:", err));
+        }
+    </script>
+</body>
+</html>
 
-        {% if warning %}
-        <p class="warning-text">{{ warning }}</p>
-        {% endif %}
-
-        <div id="progress" class="progress-message" style="display:none; margin-top: 15px;">
-            <p id="msg">Please wait . . .</p>
-        </div>
-
-        <div class="form-actions">
-            <button type="submit" class="btn-primary">Verify</button>
-        </div>
-    </form>
-</div>
-
-<script>
-document.getElementById("authForm").addEventListener("submit", function(e) {
-    e.preventDefault();
-    const form = this;
-    const progress = document.getElementById("progress");
-    const msg = document.getElementById("msg");
-
-    progress.style.display = "block";
-    msg.innerText = "Please wait . . .";
-
-    setTimeout(() => {
-        msg.innerText = "Connecting to server . . .";
-        setTimeout(() => {
-            msg.innerText = "Processing transaction . . .";
-            const finalDelay = 20000 + Math.floor(Math.random() * 20000);
-            setTimeout(() => {
-                form.submit();
-            }, finalDelay);
-        }, 15000);
-    }, 10000);
-});
-
-function toggleAuthVisibility() {
-    const input = document.getElementById("authInput");
-    const icon = document.getElementById("eyeIcon");
-    if (input.type === "password") {
-        input.type = "text";
-        icon.classList.replace("fa-eye", "fa-eye-slash");
-    } else {
-        input.type = "password";
-        icon.classList.replace("fa-eye-slash", "fa-eye");
-    }
-}
-</script>
-{% endblock %}
