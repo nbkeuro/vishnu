@@ -1,5 +1,10 @@
 import os
 from datetime import datetime
+
+@app.context_processor
+def inject_now():
+    return {'now': datetime.utcnow}
+
 from uuid import uuid4
 from decimal import Decimal, ROUND_HALF_UP
 
