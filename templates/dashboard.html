@@ -1,40 +1,33 @@
 {% extends "base.html" %}
-
-{% block title %}Dashboard{% endblock %}
-
+{% block title %}Dashboard · BLACK ROCK POS{% endblock %}
 {% block content %}
-<h2 style="text-align: center;">Welcome, Blackrock</h2>
-
-<div class="dashboard-menu">
-    <a href="{{ url_for('change_password') }}" class="menu-btn">🔑 Change Password</a>
-    <a href="{{ url_for('logout') }}" class="menu-btn">🚪 Logout</a>
-    <a href="{{ url_for('protocol') }}" class="menu-btn">💳 Enter POS</a>
+<div class="row g-4">
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5">Start a Transaction</h2>
+        <p class="text-secondary">Choose a protocol, enter card + auth, then amount.</p>
+        <a class="btn btn-success" href="{{ url_for('protocol') }}">New Transaction</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5">History</h2>
+        <p class="text-secondary">See approvals (MTI 0210), payout statuses, notes.</p>
+        <a class="btn btn-outline-light" href="{{ url_for('monitor') }}">View History</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5">Merchants</h2>
+        <p class="text-secondary">Configure payout method, chain and addresses.</p>
+        <a class="btn btn-outline-light" href="{{ url_for('merchants') }}">Manage Merchants</a>
+      </div>
+    </div>
+  </div>
 </div>
-
-<style>
-.dashboard-menu {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 15px;
-    margin-top: 30px;
-}
-
-.menu-btn {
-    display: block;
-    width: 200px;
-    padding: 12px;
-    background: #1a237e;
-    color: white;
-    text-align: center;
-    text-decoration: none;
-    font-weight: bold;
-    border-radius: 6px;
-    transition: background 0.3s ease;
-}
-
-.menu-btn:hover {
-    background: #3949ab;
-}
-</style>
 {% endblock %}
