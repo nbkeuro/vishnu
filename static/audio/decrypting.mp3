@@ -1,0 +1,4 @@
+<audio autoplay loop>
+  <source src="{{ url_for('static', filename='audio/decrypting.mp3') }}" type="audio/mpeg">
+</audio>
+

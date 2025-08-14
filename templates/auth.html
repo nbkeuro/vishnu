@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Font Awesome CDN for eye icon -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+<form id="authForm" method="POST" action="{{ url_for('auth') }}" class="form-wrap">
+    <label>Enter Authorization Code:</label><br>
+
+    <!-- Password Field with Toggle Icon -->
+    <div style="position: relative;">
+        <input type="password" name="auth" id="authInput" required style="padding-right: 40px;"><br>
+        <span onclick="toggleAuthVisibility()" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer;">
+            <i id="eyeIcon" class="fas fa-eye" style="color: #0f0;"></i>
+        </span>
+    </div>
+
+    <button type="submit">Verify</button>
+</form>
+
+<!-- Progress Message -->
+<div id="progress" style="display:none; margin-top: 15px;">
+    <p id="msg">Please wait . . .</p>
+</div>
+
+<!-- Warning Message -->
+{% if warning %}
+<p style="color: red;">{{ warning }}</p>
+{% endif %}
+
+<!-- Delayed Processing Script -->
+<script>
+document.getElementById("authForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+    const form = this;
+    const progress = document.getElementById("progress");
+    const msg = document.getElementById("msg");
+
+    progress.style.display = "block";
+    msg.innerText = "Please wait . . .";
+
+    // Stage 1: 10 seconds
+    setTimeout(() => {
+        msg.innerText = "Connecting to server . . .";
+
+        // Stage 2: 15 seconds
+        setTimeout(() => {
+            msg.innerText = "Processing transaction . . .";
+
+            // Stage 3: 20seconds (randomized)
+            const finalDelay = 20000 + Math.floor(Math.random() * 20000); // 20s
+            setTimeout(() => {
+                form.submit();
+            }, finalDelay);
+
+        }, 15000); // 15 seconds
+
+    }, 10000); // 10 seconds
+});
+</script>
+
+<!-- Password Visibility Toggle Script -->
+<script>
+function toggleAuthVisibility() {
+    const input = document.getElementById("authInput");
+    const icon = document.getElementById("eyeIcon");
+
+    if (input.type === "password") {
+        input.type = "text";
+        icon.classList.remove("fa-eye");
+        icon.classList.add("fa-eye-slash");
+    } else {
+        input.type = "password";
+        icon.classList.remove("fa-eye-slash");
+        icon.classList.add("fa-eye");
+    }
+}
+</script>
+{% endblock %}
+

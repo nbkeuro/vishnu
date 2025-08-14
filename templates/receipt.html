@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>  
+  <meta charset="UTF-8"> 
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Receipt</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    body {
+      background: #fff;
+      color: #000;
+      font-family: 'Courier New', monospace;
+      padding: 20px 5px;
+      margin: 0;
+    }
+
+    .receipt-container {
+      max-width: 380px;
+      margin: auto;
+    }
+
+    .receipt {
+      border: 1px dashed #000;
+      padding: 20px;
+      margin-bottom: 50px;
+      background: white;
+      page-break-after: always;
+    }
+
+    .receipt-logo {
+      display: block;
+      margin: 0 auto 10px auto;
+      width: 90px;
+      height: auto;
+    }
+
+    h2 {
+      text-align: center;
+      margin: 10px 0 15px 0;
+      font-size: 1.2rem;
+      text-transform: uppercase;
+    }
+
+    .copy-label {
+      text-align: center;
+      font-weight: bold;
+      margin-bottom: 10px;
+      font-size: 0.9rem;
+    }
+
+    .receipt p {
+      margin: 4px 0;
+      font-size: 0.9rem;
+    }
+
+    .signature-line {
+      margin-top: 30px;
+      border-top: 1px solid #000;
+      text-align: center;
+      padding-top: 10px;
+      font-size: 0.9rem;
+    }
+
+    .footer-note {
+      margin-top: 15px;
+      font-size: 0.75rem;
+      text-align: center;
+      font-style: italic;
+      line-height: 1.3;
+    }
+
+    .btn-group {
+      text-align: center;
+      margin-top: 20px;
+    }
+
+    .btn-group button {
+      padding: 8px 16px;
+      background-color: #1a237e;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 5px;
+    }
+
+    @media print {
+      body {
+        background: white;
+        color: black;
+      }
+      .btn-group {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt-container">
+
+    <!-- === MERCHANT COPY === -->
+    <div class="receipt">
+      <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Logo" class="receipt-logo">
+      <h2>RUTLAND POS</h2>
+      <p> Oakham, Uk. merchantdesk@rutland.co.uk </p>
+      <div class="copy-label">Merchant Copy</div>
+      <p><strong>Date:</strong> {{ timestamp }}</p>
+      <p><strong>Txn ID:</strong> {{ txn_id }}</p>
+      <p><strong>ARN:</strong> {{ arn }}</p>
+      <p><strong>Terminal:</strong> POS</p>
+      <p><strong>Protocol:</strong> {{ protocol_version }} ({{ auth_code | length }} digit )</p>
+      <p><strong>Card:</strong> **** **** **** {{ pan }}</p>
+      <p><strong>Card Type:</strong> {{ card_type }}</p>
+      <p><strong>Amount:</strong> USD {{ amount }}</p>
+      <p><strong>Payout Method:</strong> {{ payout }}</p>
+      {% if wallet %}
+        <p><strong>Wallet:</strong> {{ wallet[:5] }}********{{ wallet[-4:] }}</p>
+      {% endif %}
+      <p><strong>Authorization Code:</strong> {{ auth_code }}</p>
+      <p><strong>ISO Field 18 (MCC):</strong> {{ iso_field_18 }}</p>
+      <p><strong>ISO Field 25 (POS Condition):</strong> {{ iso_field_25 }}</p>
+      <p><strong>Transaction:</strong> {{ field39 }} — Approved</p>
+
+
+
+      <div class="signature-line">Signature</div>
+
+      <div class="footer-note">
+        I acknowledge satisfactory receipt of goods and/or services.<br>
+        <strong>NO REFUND.</strong><br>
+        *Trusted Transaction*
+      </div>
+    </div>
+
+    <!-- === CUSTOMER COPY === -->
+    <div class="receipt">
+      <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Logo" class="receipt-logo">
+      <h2>RUTLAND POS</h2>
+      <p> Oakham, UK. support@rutlandPos.co.uk </p>
+      <div class="copy-label">Customer Copy</div>
+      <p><strong>Date:</strong> {{ timestamp }}</p>
+      <p><strong>Txn ID:</strong> {{ txn_id }}</p>
+      <p><strong>ARN:</strong> {{ arn }}</p>
+      <p><strong>Terminal:</strong> POS</p>
+      <p><strong>Protocol:</strong> {{ protocol_version }} ({{ auth_code | length }} digit)</p>
+      <p><strong>Card:</strong> **** **** **** {{ pan }}</p>
+      <p><strong>Card Type:</strong> {{ card_type }}</p>
+      <p><strong>Amount:</strong> USD {{ amount }}</p>
+      <p><strong>Payout Method:</strong> {{ payout }}</p>
+      {% if wallet %}
+        <p><strong>Wallet:</strong> {{ wallet[:5] }}****{{ wallet[-4:] }}</p>
+      {% endif %}
+      <p><strong>Authorization Code:</strong> {{ auth_code }}</p>
+      <p><strong>ISO Field 18 (MCC):</strong> {{ iso_field_18 }}</p>
+      <p><strong>ISO Field 25 (POS Condition):</strong> {{ iso_field_25 }}</p>
+      <p><strong>Transaction:</strong> {{ field39 }} — Approved</p>
+
+
+
+      <div class="signature-line">Signature</div>
+
+
+      <div class=footer-note>
+	<p><strong>Pay 0.5%  Merchant fee on this  wallet: </strong></p>
+	<img src="{{ url_for('static', filename='licence.jpg') }}" alt="Wallet" class="receipt-logo">
+     </div>
+
+
+     <div class="footer-note">
+        I acknowledge satisfactory receipt of goods and/or services.<br>
+        <strong>NO REFUND.</strong><br>
+        *Trusted Transaction*
+      </div>
+    </div>
+  </div>
+
+  <!-- BUTTONS -->
+  <div class="btn-group">
+    <button onclick="window.print()">🖨 Print Receipt</button>
+    <a href="{{ url_for('protocol') }}"><button>New Transaction</button></a>
+  </div>
+</body>
+</html>
+

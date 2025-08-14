@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<form method="POST" action="{{ url_for('card') }}" class="form-wrap">
+    <h2>Manual Card Entry</h2>	
+    <label>Card Number:</label><br>
+    <input type="text" name="pan" placeholder="5423 5748 7648 9468" required><br>
+
+    <label>Expiry Date (MM/YY):</label><br>
+    <input type="text" name="expiry" placeholder="09/26" required><br>
+
+    <label>CVV:</label><br>
+    <input type="text" name="cvv" placeholder="123" required><br>
+
+    <button type="submit">Proceed to Auth</button>
+</form>
+{% endblock %}
+

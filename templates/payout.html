@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Select Payout Method</h2>
+<form action="/payout" method="post" onsubmit="return validateWallet();" class="form-wrap" >
+    <label><input type="radio" name="method" value="ERC20" required> USDT ERC20</label><br>
+    <input type="text" id="erc20_wallet" name="erc20_wallet" placeholder="0x... ERC20 Address"><br><br>
+
+    <label><input type="radio" name="method" value="TRC20" required> USDT TRC20</label><br>
+    <input type="text" id="trc20_wallet" name="trc20_wallet" placeholder="T... TRC20 Address"><br><br>
+
+    <button type="submit">Continue</button>
+</form>
+
+<script>
+function validateWallet() {
+    const method = document.querySelector('input[name="method"]:checked')?.value;
+    const erc = document.getElementById('erc20_wallet').value.trim();
+    const trc = document.getElementById('trc20_wallet').value.trim();
+
+    if (method === "ERC20") {
+        if (!erc.startsWith("0x") || erc.length !== 42) {
+            alert("Invalid ERC20 address. Must start with '0x' and be 42 characters.");
+            return false;
+        }
+    } else if (method === "TRC20") {
+        if (!trc.startsWith("T") || trc.length < 34) {
+            alert("Invalid TRC20 address. Must start with 'T' and be at least 34 characters.");
+            return false;
+        }
+    } else {
+        alert("Please select a payout method.");
+        return false;
+    }
+    return true;
+}
+</script>
+{% endblock %}
+
