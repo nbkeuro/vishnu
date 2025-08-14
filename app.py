@@ -1,4 +1,3 @@
-
 import os
 from datetime import datetime
 from uuid import uuid4
@@ -38,10 +37,10 @@ db = SQLAlchemy(app)
 class Merchant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     mid = db.Column(db.String(64), unique=True, index=True)
-    payout_method = db.Column(db.String(16), default=DEFAULT_PAYOUT_METHOD)  # CRYPTO or BANK
-    chain = db.Column(db.String(16), default=DEFAULT_CHAIN)  # crypto
+    payout_method = db.Column(db.String(16), default=DEFAULT_PAYOUT_METHOD)
+    chain = db.Column(db.String(16), default=DEFAULT_CHAIN)
     address = db.Column(db.String(128))
-    bank_name = db.Column(db.String(64))  # bank
+    bank_name = db.Column(db.String(64))
     account_name = db.Column(db.String(64))
     account_no = db.Column(db.String(64))
     ifsc_swift = db.Column(db.String(32))
@@ -58,7 +57,7 @@ class Transaction(db.Model):
     amount_cents = db.Column(db.Integer, default=0)
     currency = db.Column(db.String(3), default="USD")
     resp_code = db.Column(db.String(2), default="00")
-    auth_code = db.Column(db.String(12))  # F38
+    auth_code = db.Column(db.String(12))
     status = db.Column(db.String(32), default="approved")
     payout_method = db.Column(db.String(16), default=DEFAULT_PAYOUT_METHOD)
     payout_chain = db.Column(db.String(16), default=DEFAULT_CHAIN)
@@ -85,9 +84,12 @@ BASE = """
 {% with msgs = get_flashed_messages() %}
   {% if msgs %}<ul style='color:green'>{% for m in msgs %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
 {% endwith %}
-{% block content %}{% endblock %}
+{{ body|safe }}
 </div></body></html>
 """
+
+def render_page(title, body_html, **context):
+    return render_template_string(BASE, title=title, body=body_html, **context)
 
 def require_login():
     return bool(session.get("user"))
@@ -138,11 +140,10 @@ def login():
             session["user"] = "admin"
             return redirect(url_for("home"))
         flash("Invalid password")
-    return render_template_string(BASE + """
-    {% block content %}
+    return render_page("Login", """
     <h3>Login</h3>
     <form method='post'><input type='password' name='password'><button>Login</button></form>
-    {% endblock %}""", title="Login")
+    """)
 
 @app.route("/logout")
 def logout():
@@ -154,8 +155,7 @@ def home():
     if not require_login():
         return redirect(url_for("login"))
     m = Merchant.query.filter_by(mid="DEMO_MID_001").first()
-    return render_template_string(BASE + """
-    {% block content %}
+    return render_page("Home", """
     <h3>Card Terminal</h3>
     <form method='post' action='{{ url_for("punch") }}'>
       Amount: <input name='amount' required><br>
@@ -170,7 +170,7 @@ def home():
       Issuer Auth Code (F38): <input name='auth_code'><br>
       <button>Process</button>
     </form>
-    {% endblock %}""", title="Home", protocols=PROTOCOLS, m=m)
+    """, protocols=PROTOCOLS, m=m)
 
 @app.route("/punch", methods=["POST"])
 def punch():
@@ -215,8 +215,7 @@ def punch():
     max_gas_allowed = compute_gas_caps(amount_cents)
     est_fee = simulate_network_fee_usd(tx.payout_chain, amount_cents) if m.payout_method=="CRYPTO" else Decimal("0.00")
 
-    return render_template_string(BASE + """
-    {% block content %}
+    return render_page("Approved", """
     <h3>Approved (MTI 0210)</h3>
     <p>Protocol: {{ tx.protocol }}</p>
     <p>Auth Code: {{ tx.auth_code }}</p>
@@ -230,7 +229,7 @@ def punch():
     <form method='post' action='{{ url_for("send_payout", tx_id=tx.id) }}'>
       <button {% if tx.payout_method=="CRYPTO" and est_fee > max_gas_allowed %}disabled{% endif %}>Trigger Payout</button>
     </form>
-    {% endblock %}""", title="Approved", tx=tx, cents_to_display=cents_to_display,
+    """, tx=tx, cents_to_display=cents_to_display,
         max_gas_allowed=max_gas_allowed, est_fee=est_fee)
 
 @app.route("/payout/<int:tx_id>", methods=["POST"])
@@ -284,8 +283,7 @@ def merchants():
         flash("Merchant updated")
         return redirect(url_for("merchants"))
     items = Merchant.query.all()
-    return render_template_string(BASE + """
-    {% block content %}
+    return render_page("Merchants", """
     <h3>Merchants</h3>
     <form method='post'>
       MID: <input name='mid'><br>
@@ -298,15 +296,14 @@ def merchants():
       IFSC/SWIFT: <input name='ifsc_swift'><br>
       <button>Save</button>
     </form>
-    {% endblock %}""", title="Merchants", items=items)
+    """, items=items)
 
 @app.route("/monitor")
 def monitor():
     if not require_login():
         return redirect(url_for("login"))
     txs = Transaction.query.order_by(Transaction.created_at.desc()).all()
-    return render_template_string(BASE + """
-    {% block content %}
+    return render_page("History", """
     <h3>Transaction History</h3>
     <table border=1>
       <tr><th>When</th><th>Protocol</th><th>Amount</th><th>Status</th><th>Auth</th></tr>
@@ -316,10 +313,10 @@ def monitor():
       </tr>
       {% endfor %}
     </table>
-    {% endblock %}""", title="History", cents_to_display=cents_to_display, txs=txs)
+    """, cents_to_display=cents_to_display, txs=txs)
 
-@app.before_request
-def init_db():
+# ------------------ Init DB at Startup ------------------
+with app.app_context():
     db.create_all()
     if not Merchant.query.filter_by(mid="DEMO_MID_001").first():
         db.session.add(Merchant(mid="DEMO_MID_001", payout_method=DEFAULT_PAYOUT_METHOD, chain=DEFAULT_CHAIN, address="WalletXYZ"))
