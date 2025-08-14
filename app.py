@@ -5,14 +5,21 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from flask import (
     Flask, request, session, redirect, url_for,
-    render_template, flash
+    render_template, render_template_string, flash
 )
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# 2FA
+import pyotp
 
 # ------------------ Config ------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///app.db")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+# Seed admin (used only on first run to create the account)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD_SEED = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_TOTP_SEED = os.getenv("TOTP_SECRET")  # if absent, one will be generated
 
 MAX_GAS_USD = Decimal(os.getenv("MAX_GAS_USD", "5"))
 MAX_GAS_PCT = Decimal(os.getenv("MAX_GAS_PCT", "1.5"))
@@ -72,6 +79,12 @@ class Transaction(db.Model):
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class AdminUser(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), unique=True, index=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    totp_secret = db.Column(db.String(64), nullable=False)  # base32
+
 # ------------------ Helpers ------------------
 def require_login():
     return bool(session.get("user"))
@@ -116,6 +129,9 @@ def mask_pan(pan):
         return "*" * (len(digits) - 4) + digits[-4:]
     return digits[:6] + "*" * (len(digits) - 10) + digits[-4:]
 
+def get_admin():
+    return AdminUser.query.filter_by(username=ADMIN_USERNAME).first()
+
 # ------------------ Auth / Session ------------------
 @app.route("/", methods=["GET"])
 def root():
@@ -123,18 +139,106 @@ def root():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    # Renders templates/login.html you provided (expects username & password fields)
     if request.method == "POST":
-        if request.form.get("password") == ADMIN_PASSWORD:
-            session["user"] = "admin"
+        username = (request.form.get("username") or "").strip()
+        password = (request.form.get("password") or "")
+        admin = AdminUser.query.filter_by(username=username).first()
+        if admin and check_password_hash(admin.password_hash, password):
+            session["user"] = admin.username
+            flash("Logged in.")
             return redirect(url_for("dashboard"))
-        flash("Invalid password")
-    return render_template("base.html", **{"title": "Login", "messages": []})  # base shell
-    # You likely have a dedicated login template; if so, render it instead.
+        flash("Invalid credentials.")
+    return render_template("login.html")
 
 @app.route("/logout")
 def logout():
     session.clear()
+    flash("Logged out.")
     return redirect(url_for("login"))
+
+# -------- Forgot Password (via TOTP) ----------
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    # Single-page flow: username + TOTP + new password
+    error = success = None
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        otp = (request.form.get("otp") or "").strip()
+        new = request.form.get("new") or ""
+        confirm = request.form.get("confirm") or ""
+
+        admin = AdminUser.query.filter_by(username=username).first()
+        if not admin:
+            error = "User not found."
+        elif not (new and new == confirm):
+            error = "New password and confirmation must match."
+        else:
+            totp = pyotp.TOTP(admin.totp_secret)
+            if not totp.verify(otp, valid_window=1):
+                error = "Invalid or expired TOTP."
+            else:
+                admin.password_hash = generate_password_hash(new)
+                db.session.commit()
+                success = "Password reset successful. You can now log in."
+                flash(success)
+                return redirect(url_for("login"))
+
+    # Inline minimal template so you don't need another file
+    return render_template_string(
+        """
+        {% extends "base.html" %}
+        {% block content %}
+        <h2>Reset Password (TOTP)</h2>
+        {% if error %}<p style="color:red">{{ error }}</p>{% endif %}
+        {% if success %}<p style="color:green">{{ success }}</p>{% endif %}
+        <form method="POST" class="form-wrap">
+          <label>User ID:</label><br>
+          <input type="text" name="username" required><br>
+          <label>Authenticator Code (TOTP):</label><br>
+          <input type="text" name="otp" required><br>
+          <label>New Password:</label><br>
+          <input type="password" name="new" required><br>
+          <label>Confirm New Password:</label><br>
+          <input type="password" name="confirm" required><br>
+          <button type="submit">Reset Password</button>
+        </form>
+        <p style="margin-top:10px">Use your Authy / Google Authenticator app for the code.</p>
+        {% endblock %}
+        """,
+        error=error, success=success
+    )
+
+# Optional: show current user's TOTP setup (secret + provisioning URI)
+@app.route("/totp-setup")
+def totp_setup():
+    if not require_login():
+        return redirect(url_for("login"))
+    admin = get_admin()
+    if not admin:
+        flash("Admin user not found.")
+        return redirect(url_for("dashboard"))
+
+    issuer = "RUTLAND_POS"
+    account_name = admin.username
+    uri = pyotp.totp.TOTP(admin.totp_secret).provisioning_uri(name=account_name, issuer_name=issuer)
+
+    # Inline simple page (you can create a template later if you like)
+    return render_template_string(
+        """
+        {% extends "base.html" %}
+        {% block content %}
+        <h2>TOTP Setup</h2>
+        <p><strong>Secret:</strong> {{ secret }}</p>
+        <p><strong>Issuer:</strong> {{ issuer }}</p>
+        <p><strong>Account:</strong> {{ account }}</p>
+        <p><strong>URI (copy into Authy/Google Authenticator):</strong></p>
+        <code style="display:block;word-break:break-all">{{ uri }}</code>
+        <p class="note">Security tip: after enrolling your device, keep the secret safe.</p>
+        {% endblock %}
+        """,
+        secret=admin.totp_secret, issuer=issuer, account=account_name, uri=uri
+    )
 
 # ------------------ UI Pages ------------------
 @app.route("/dashboard")
@@ -156,7 +260,6 @@ def protocol():
         session["selected_protocol"] = selected_protocol
         return redirect(url_for("card"))
 
-    # template expects: protocols iterable
     return render_template("protocol.html", protocols=list(PROTOCOLS.keys()))
 
 @app.route("/card", methods=["GET", "POST"])
@@ -172,14 +275,11 @@ def card():
         expiry = (request.form.get("expiry") or "").strip()
         cvv = (request.form.get("cvv") or "").strip()
 
-        # Basic format checks per your requirements:
-        # - PAN: allow spaces every 4 digits; store digits only; must be 12-19 digits typical; you asked for spacing every 4
         digits_only = "".join(ch for ch in pan if ch.isdigit())
         if not (12 <= len(digits_only) <= 19):
             flash("Card number must be 12–19 digits.")
             return redirect(url_for("card"))
 
-        # - Expiry: must be MM/YY (with '/')
         if len(expiry) != 5 or expiry[2] != "/":
             flash("Expiry must be in MM/YY format.")
             return redirect(url_for("card"))
@@ -189,7 +289,6 @@ def card():
             flash("Invalid expiry date.")
             return redirect(url_for("card"))
 
-        # - CVV/CVC: you asked for 4 digits
         if not (cvv.isdigit() and len(cvv) == 4):
             flash("CVV/CVC must be 4 digits.")
             return redirect(url_for("card"))
@@ -281,7 +380,7 @@ def amount():
         db.session.add(tx)
         db.session.commit()
 
-        # Optional: auto-payout for CRYPTO if fee <= cap; BANK simulated otherwise
+        # Optional: auto-payout
         if tx.payout_method == "CRYPTO":
             allowed = compute_gas_caps(tx.amount_cents)
             est_fee = simulate_network_fee_usd(tx.payout_chain, tx.amount_cents)
@@ -308,7 +407,7 @@ def amount():
 
     return render_template("amount.html")
 
-# ------------------ Merchants (simple form via string or add a template later) ------------------
+# ------------------ Merchants ------------------
 @app.route("/merchants", methods=["GET", "POST"])
 def merchants():
     if not require_login():
@@ -335,14 +434,14 @@ def merchants():
         return redirect(url_for("merchants"))
 
     items = Merchant.query.all()
-    # Temporary inline view: keep simple until you add merchants.html
+    # Temporary inline list; you can move to a merchants.html later
     rows = "".join(
         f"<tr><td>{m.mid}</td><td>{m.payout_method}</td><td>{m.chain or ''}</td><td>{m.address or ''}</td></tr>"
         for m in items
     )
     html = f"""
     <h3>Merchants</h3>
-    <form method='post'>
+    <form method='post' class='form-wrap'>
       MID: <input name='mid'><br>
       Method: <select name='payout_method'><option>CRYPTO</option><option>BANK</option></select><br>
       Chain: <input name='chain'><br>
@@ -359,7 +458,7 @@ def merchants():
       {rows}
     </table>
     """
-    return html
+    return render_template_string("{% extends 'base.html' %}{% block content %}" + html + "{% endblock %}")
 
 # ------------------ Monitor ------------------
 @app.route("/monitor")
@@ -368,28 +467,30 @@ def monitor():
         return redirect(url_for("login"))
     txs = Transaction.query.order_by(Transaction.created_at.desc()).all()
 
-    # Simple table (you can create a monitor.html later and move this there)
     def row(t):
         return f"<tr><td>{t.created_at}</td><td>{t.protocol}</td><td>{cents_to_display(t.amount_cents)} {t.currency}</td>" \
                f"<td>{t.status}</td><td>{t.auth_code}</td><td>{t.notes or ''}</td></tr>"
 
     rows = "".join(row(t) for t in txs)
-    return f"""
-    <html><head><title>History</title></head><body>
-    <a href="{url_for('dashboard')}">Home</a> | <a href="{url_for('logout')}">Logout</a>
+    html = f"""
     <h3>Transaction History</h3>
     <table border=1 cellpadding=6>
       <tr><th>When</th><th>Protocol</th><th>Amount</th><th>Status</th><th>Auth</th><th>Notes</th></tr>
       {rows}
     </table>
-    </body></html>
     """
+    return render_template_string("{% extends 'base.html' %}{% block content %}" + html + "{% endblock %}")
 
-# ------------------ Change Password (template: password.html) ------------------
+# ------------------ Change Password ------------------
 @app.route("/change-password", methods=["GET", "POST"])
 def change_password():
     if not require_login():
         return redirect(url_for("login"))
+
+    admin = get_admin()
+    if not admin:
+        flash("Admin user not found.")
+        return redirect(url_for("dashboard"))
 
     error = success = None
     if request.method == "POST":
@@ -397,19 +498,22 @@ def change_password():
         new = request.form.get("new") or ""
         confirm = request.form.get("confirm") or ""
 
-        if curr != ADMIN_PASSWORD:
+        if not check_password_hash(admin.password_hash, curr):
             error = "Current password is incorrect."
         elif not new or new != confirm:
             error = "New password and confirmation must match."
         else:
-            # In a real system, you'd persist this securely.
-            success = "Password updated (demo message)."
+            admin.password_hash = generate_password_hash(new)
+            db.session.commit()
+            success = "Password updated."
 
     return render_template("password.html", error=error, success=success)
 
 # ------------------ Init DB at Startup ------------------
 with app.app_context():
     db.create_all()
+
+    # Ensure demo merchant exists
     if not Merchant.query.filter_by(mid="DEMO_MID_001").first():
         db.session.add(Merchant(
             mid="DEMO_MID_001",
@@ -418,6 +522,23 @@ with app.app_context():
             address="WalletXYZ"
         ))
         db.session.commit()
+
+    # Ensure admin user exists
+    admin = AdminUser.query.filter_by(username=ADMIN_USERNAME).first()
+    if not admin:
+        seed_secret = ADMIN_TOTP_SEED or pyotp.random_base32()
+        admin = AdminUser(
+            username=ADMIN_USERNAME,
+            password_hash=generate_password_hash(ADMIN_PASSWORD_SEED),
+            totp_secret=seed_secret
+        )
+        db.session.add(admin)
+        db.session.commit()
+        print("=== Admin user created ===")
+        print(f"Username: {ADMIN_USERNAME}")
+        print(f"Seed password: {ADMIN_PASSWORD_SEED}")
+        print(f"TOTP secret (save to Authy/Google Authenticator): {seed_secret}")
+        print("You can also visit /totp-setup after login to view the provisioning URI.")
 
 # ------------------ Run ------------------
 if __name__ == "__main__":
