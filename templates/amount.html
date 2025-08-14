@@ -1,38 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Enter Amount · BLACK ROCK POS{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-  <div class="col-12 col-md-8 col-lg-6">
-    <div class="card">
-      <div class="card-body">
-        <h1 class="h5 mb-4">Transaction Amount</h1>
-        <form method="post" novalidate>
-          <div class="mb-3">
-            <label class="form-label">Amount (USD)</label>
-            <input class="form-control" name="amount" id="amount" inputmode="decimal" placeholder="0.00" required>
-          </div>
-          <div class="d-flex gap-2">
-            <a class="btn btn-outline-light" href="{{ url_for('auth') }}">Back</a>
-            <button class="btn btn-success">Approve (MTI 0210)</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-</div>
+<h3>Enter Withdrawal Amount</h3>
+<form method="POST">
+    <label>Amount (USD):</label>
+    <input type="text" name="amount" required>
+    <button type="submit">Submit</button>
+</form>
 {% endblock %}
-
-{% block body_extra %}
-<script>
-  const amt = document.getElementById('amount');
-  if (amt) {
-    amt.addEventListener('blur', e => {
-      let v = (e.target.value || '').replace(/[^0-9.]/g, '');
-      if (!v) return;
-      const n = Number(v);
-      if (!Number.isNaN(n)) e.target.value = n.toFixed(2);
-    });
-  }
-</script>
-{% endblock %}
-
